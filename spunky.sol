@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0
+
 pragma solidity >=0.8.0 <0.9.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -11,6 +13,7 @@ contract SpunkySDX is Ownable {
 
     // Token balances
     mapping(address => uint256) private _balances;
+    mapping(address => mapping(uint8 => uint256)) private _allocationBalances;
 
     // Token allowances
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -27,9 +30,9 @@ contract SpunkySDX is Ownable {
     mapping(address => uint256) private _stakingRewards;
 
     // Token distribution details
-    uint256 private constant WHITELIST_ALLOCATION = 2e6;
-    uint256 private constant PRESALE_ALLOCATION = 20e6;
-    uint256 private constant IEO_ALLOCATION = 8e6;
+    uint256 private WHITELIST_ALLOCATION = 0; // 2% of total supply
+    uint256 private PRESALE_ALLOCATION = 0; // 20% of total supply
+    uint256 private IEO_ALLOCATION = 0; // 8% of total supply 
 
     // Pricing details
     uint256 private constant WHITELIST_PRICE = 8e13;
@@ -42,8 +45,12 @@ contract SpunkySDX is Ownable {
     uint256 private constant TRANSACTION_DELAY = 10 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
+    //Events
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Stake(address indexed user, uint256 amount);
+    event Unstake(address indexed user, uint256 amount);
+    event ClaimRewards(address indexed user, uint256 reward);
 
    constructor() {
     name = "SpunkySDX";
@@ -51,24 +58,32 @@ contract SpunkySDX is Ownable {
     decimals = 18;
     totalSupply = 500e9 * 10**uint256(decimals);
 
-    _balances[msg.sender] = totalSupply;
-    emit Transfer(address(0), msg.sender, totalSupply);
+    // Initially assign all tokens to the contract itself
+    _balances[address(this)] = totalSupply;
 
-    // Mint tokens for whitelist allocation
-    _balances[address(this)] = WHITELIST_ALLOCATION;
-    emit Transfer(address(0), address(this), WHITELIST_ALLOCATION);
+    // Token distribution details based on total supply
+    WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
+    PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
+    IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
 
-    // Mint tokens for IEO allocation
-    _balances[address(this)] = IEO_ALLOCATION;
-    emit Transfer(address(0), address(this), IEO_ALLOCATION);
+    // Allocate tokens for the whitelist, presale, and IEO
+    _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
+    _allocationBalances[address(this)][2] = PRESALE_ALLOCATION;
+    _allocationBalances[address(this)][3] = IEO_ALLOCATION;
 
-    // Adjust the balances of the designated addresses
-    _balances[msg.sender] = _balances[msg.sender] - totalSupply - WHITELIST_ALLOCATION - IEO_ALLOCATION;
-    _balances[address(this)] = _balances[address(this)] + totalSupply + WHITELIST_ALLOCATION + IEO_ALLOCATION;
+    emit Transfer(address(0), address(this), totalSupply);
+    emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
+    emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
+    emit Transfer(address(this), address(this), IEO_ALLOCATION);
    }
 
     function balanceOf(address account) public view returns (uint256) {
         return _balances[account];
+    }
+
+    function allocationBalance(address account, uint8 allocation) public view returns (uint256) {
+        require(allocation >= 1 && allocation <= 3, "Invalid allocation");
+        return _allocationBalances[account][allocation];
     }
 
     function transfer(address recipient, uint256 amount) public checkTransactionDelay() checkMaxHolding(recipient, amount) returns (bool) {
@@ -176,30 +191,40 @@ contract SpunkySDX is Ownable {
     }
 
     function calculateStakingReward(uint256 amount, uint256 duration) internal pure returns (uint256) {
-        uint256 rewardPercentage = STAKING_APY * duration / 365 days;
+        require(amount > 0, "Invalid staking amount");
+        require(duration > 0, "Invalid staking duration");
+
+        uint256 rewardPercentage = (STAKING_APY * duration) / 365 days;
         return (amount * rewardPercentage) / 100;
     }
 
     function updateStakingRewards(address staker, uint256 amount, uint256 duration) internal {
+        require(duration > 0, "Invalid staking duration");
+        require(staker != address(0), "Invalid staker address");
+        require(amount > 0, "Invalid staking amount");
+
         uint256 rewards = calculateStakingReward(amount, duration);
-        _stakingRewards[staker] = _stakingRewards[staker] * rewards;
+        _stakingRewards[staker] = _stakingRewards[staker] + rewards;
     }
 
     function stake(uint256 amount, uint256 lockupDuration) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
         require(amount > 0, "Invalid staking amount");
+        require(lockupDuration > 0, "Invalid lockup duration");
 
         _transfer(msg.sender, address(this), amount);
-        _stakingBalances[msg.sender] += amount;
+        _stakingBalances[msg.sender] = _stakingBalances[msg.sender] + amount;
 
         updateStakingRewards(msg.sender, amount, lockupDuration);
+        emit Stake(msg.sender, amount);
     }
 
     function unstake(uint256 amount) external checkTransactionDelay() {
         require(amount > 0, "Invalid unstaking amount");
         require(_stakingBalances[msg.sender] >= amount, "No staking balance available");
 
-        _stakingBalances[msg.sender] -= amount;
+        _stakingBalances[msg.sender] = _stakingBalances[msg.sender] - amount;
         _transfer(address(this), msg.sender, amount);
+        emit Unstake(msg.sender, amount);
     }
 
     function claimStakingRewards() external checkTransactionDelay() {
@@ -208,6 +233,7 @@ contract SpunkySDX is Ownable {
         uint256 rewards = _stakingRewards[msg.sender];
         _stakingRewards[msg.sender] = 0;
         _transfer(address(this), msg.sender, rewards);
+        emit ClaimRewards(msg.sender, rewards);
     }
 
     function getStakingRewards(address staker) external view returns (uint256) {
@@ -230,27 +256,26 @@ contract SpunkySDX is Ownable {
     }
 
     function redeemUnsoldTokens(uint8 allocation) external onlyOwner {
-    require(allocation >= 1 && allocation <= 3, "Invalid allocation");
+        require(allocation >= 1 && allocation <= 3, "Invalid allocation");
 
-    uint256 tokensToRedeem;
+        uint256 tokensToRedeem;
 
-    if (allocation == 1) {
-        // Redeem unsold tokens for whitelist allocation
-        tokensToRedeem = WHITELIST_ALLOCATION - _balances[address(this)];
-    } else if (allocation == 2) {
-        // Redeem unsold tokens for presale allocation
-        tokensToRedeem = PRESALE_ALLOCATION - _balances[address(this)];
-    } else if (allocation == 3) {
-        // Redeem unsold tokens for IEO allocation
-        tokensToRedeem = IEO_ALLOCATION - _balances[address(this)];
+        if (allocation == 1) {
+            // Redeem unsold tokens for whitelist allocation
+            tokensToRedeem = WHITELIST_ALLOCATION - _allocationBalances[address(this)][1];
+        } else if (allocation == 2) {
+            // Redeem unsold tokens for presale allocation
+            tokensToRedeem = PRESALE_ALLOCATION - _allocationBalances[address(this)][2];
+        } else if (allocation == 3) {
+            // Redeem unsold tokens for IEO allocation
+            tokensToRedeem = IEO_ALLOCATION - _allocationBalances[address(this)][3];
+        }
+
+        require(tokensToRedeem > 0, "No unsold tokens for the specified allocation");
+
+        // Transfer the unsold tokens to the contract owner
+        _transfer(address(this), owner(), tokensToRedeem);
     }
-
-    require(tokensToRedeem > 0, "No unsold tokens for the specified allocation");
-
-    // Transfer the unsold tokens to the contract owner
-    _transfer(address(this), owner(), tokensToRedeem);
-   }
-
 
     modifier checkTransactionDelay() {
         require(
