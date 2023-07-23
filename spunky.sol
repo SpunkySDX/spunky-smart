@@ -30,9 +30,9 @@ contract SpunkySDX is Ownable {
     mapping(address => uint256) private _stakingRewards;
 
     // Token distribution details
-    uint256 private WHITELIST_ALLOCATION = 0; // 2% of total supply
-    uint256 private PRESALE_ALLOCATION = 0; // 20% of total supply
-    uint256 private IEO_ALLOCATION = 0; // 8% of total supply 
+    uint256 private WHITELIST_ALLOCATION = 0; 
+    uint256 private PRESALE_ALLOCATION = 0; 
+    uint256 private IEO_ALLOCATION = 0;  
 
     // Pricing details
     uint256 private constant WHITELIST_PRICE = 8e13;
