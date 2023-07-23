@@ -45,7 +45,7 @@ contract SpunkySDX is Ownable {
     uint256 private constant TRANSACTION_DELAY = 10 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
-    //Events
+    //Event emitters
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event Stake(address indexed user, uint256 amount);
