@@ -63,7 +63,7 @@ contract SpunkySDX is Ownable {
     WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
     PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
     IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
-    AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 8% of total supply
+    AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 4% of total supply
 
     // Allocate tokens for the whitelist, presale, airdrop and IEO
     _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
