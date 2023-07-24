@@ -30,14 +30,11 @@ contract SpunkySDX is Ownable {
     mapping(address => uint256) private _stakingRewards;
 
     // Token distribution details
-    uint256 private WHITELIST_ALLOCATION = 0; 
-    uint256 private PRESALE_ALLOCATION = 0; 
-    uint256 private IEO_ALLOCATION = 0;  
+    uint256 private WHITELIST_ALLOCATION = 0; // 2% of total supply
+    uint256 private PRESALE_ALLOCATION = 0; // 20% of total supply
+    uint256 private IEO_ALLOCATION = 0; // 8% of total supply 
 
-    // Pricing details
-    uint256 private constant WHITELIST_PRICE = 8e13;
-    uint256 private constant PRESALE_PRICE = 2e14;
-    uint256 private constant IEO_PRICE = 2e14;
+    // Slippage tolerance
     uint256 private constant MAX_SLIPPAGE_TOLERANCE = 5;
 
     // Antibot features
@@ -45,7 +42,7 @@ contract SpunkySDX is Ownable {
     uint256 private constant TRANSACTION_DELAY = 10 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
-    //Event emitters
+    //Events
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event Stake(address indexed user, uint256 amount);
@@ -160,7 +157,7 @@ contract SpunkySDX is Ownable {
         uint256 releaseInterval = RELEASE_INTERVAL * 30 days;
 
         uint256 totalVested = balanceOf(address(this)) - WHITELIST_ALLOCATION - PRESALE_ALLOCATION - IEO_ALLOCATION;
-        uint256 tokensPerInterval = totalVested / vestingPeriod * releaseInterval;
+        uint256 tokensPerInterval = totalVested / (vestingPeriod * releaseInterval);
 
         uint256 intervalsPassed = (block.timestamp - _vestingStart[msg.sender]) / releaseInterval;
         uint256 tokensToRelease = tokensPerInterval * intervalsPassed;
