@@ -32,8 +32,13 @@ contract SpunkySDX is Ownable {
     // Token distribution details
     uint256 private WHITELIST_ALLOCATION = 0; 
     uint256 private PRESALE_ALLOCATION = 0; 
-    uint256 private IEO_ALLOCATION = 0; 
-    uint256 private AIRDROP_ALLOCATION = 0; 
+    uint256 private IEO_ALLOCATION = 0;  
+    uint256 private AIRDROP_ALLOCATION = 0;  
+    uint256 private TEAM_ALLOCATION = 0;  
+    uint256 private STAKING_ALLOCATION = 0;
+    
+    //Staking rewards
+    uint256 public totalRewardsGiven = 0;
 
     // Slippage tolerance
     uint256 private constant MAX_SLIPPAGE_TOLERANCE = 5;
@@ -64,21 +69,28 @@ contract SpunkySDX is Ownable {
     PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
     IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
     AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 4% of total supply
-
+    TEAM_ALLOCATION = totalSupply * 6 / 100; // 6% of total supply
+    STAKING_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
+    
     // Allocate tokens for the whitelist, presale, airdrop and IEO
     _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
     _allocationBalances[address(this)][2] = PRESALE_ALLOCATION;
     _allocationBalances[address(this)][3] = IEO_ALLOCATION;
     _allocationBalances[address(this)][4] = AIRDROP_ALLOCATION;
+    _allocationBalances[address(this)][5] = TEAM_ALLOCATION;
+    _allocationBalances[address(this)][6] = STAKING_ALLOCATION;
 
     //Transfer Whitelist,presale and IEO allocation to the contract owner
-    _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION);
+    _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION + TEAM_ALLOCATION);
       
     emit Transfer(address(0), address(this), totalSupply);
     emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
     emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
     emit Transfer(address(this), address(this), IEO_ALLOCATION);
-   }
+    emit Transfer(address(this), address(this), AIRDROP_ALLOCATION);
+    emit Transfer(address(this), address(this), TEAM_ALLOCATION);
+    emit Transfer(address(this), address(this), STAKING_ALLOCATION);
+    }
 
     function balanceOf(address account) public view returns (uint256) {
         return _balances[account];
@@ -224,12 +236,16 @@ contract SpunkySDX is Ownable {
         require(amount > 0, "Invalid staking amount");
         require(lockupDuration > 0, "Invalid lockup duration");
 
+        uint256 potentialReward = calculateStakingReward(amount, lockupDuration);
+        require(totalRewardsGiven + potentialReward <= STAKING_ALLOCATION, "Staking rewards exhausted");
+
         _transfer(msg.sender, address(this), amount);
         _stakingBalances[msg.sender] = _stakingBalances[msg.sender] + amount;
 
         updateStakingRewards(msg.sender, amount, lockupDuration);
         emit Stake(msg.sender, amount);
     }
+
 
     function unstake(uint256 amount) external checkTransactionDelay() {
         require(amount > 0, "Invalid unstaking amount");
@@ -240,11 +256,12 @@ contract SpunkySDX is Ownable {
         emit Unstake(msg.sender, amount);
     }
 
-    function claimStakingRewards() external checkTransactionDelay() {
+    function claimStakingRewards() external checkTransactionDelay() checkStakingRewards(_stakingRewards[msg.sender]) {
         require(_stakingRewards[msg.sender] > 0, "No staking rewards available");
 
         uint256 rewards = _stakingRewards[msg.sender];
         _stakingRewards[msg.sender] = 0;
+        totalRewardsGiven += rewards; // Increase the total amount of rewards given
         _transfer(address(this), msg.sender, rewards);
         emit ClaimRewards(msg.sender, rewards);
     }
@@ -286,4 +303,9 @@ contract SpunkySDX is Ownable {
         }
         _;
     }
+
+    modifier checkStakingRewards(uint256 reward) {
+    require(totalRewardsGiven + reward <= STAKING_ALLOCATION, "Total staking rewards exceeded");
+    _;
+   }
 }
