@@ -33,6 +33,7 @@ contract SpunkySDX is Ownable {
     uint256 private WHITELIST_ALLOCATION = 0; // 2% of total supply
     uint256 private PRESALE_ALLOCATION = 0; // 20% of total supply
     uint256 private IEO_ALLOCATION = 0; // 8% of total supply 
+    uint256 private AIRDROP_ALLOCATION = 0; // 8% of total supply 
 
     // Slippage tolerance
     uint256 private constant MAX_SLIPPAGE_TOLERANCE = 5;
@@ -62,12 +63,17 @@ contract SpunkySDX is Ownable {
     WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
     PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
     IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
+    AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 8% of total supply
 
-    // Allocate tokens for the whitelist, presale, and IEO
+    // Allocate tokens for the whitelist, presale, airdrop and IEO
     _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
     _allocationBalances[address(this)][2] = PRESALE_ALLOCATION;
     _allocationBalances[address(this)][3] = IEO_ALLOCATION;
+    _allocationBalances[address(this)][4] = AIRDROP_ALLOCATION;
 
+    //Transfer Whitelist,presale and IEO allocation to the contract owner
+    _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION);
+      
     emit Transfer(address(0), address(this), totalSupply);
     emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
     emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
@@ -142,6 +148,16 @@ contract SpunkySDX is Ownable {
 
         _allowances[owner][spender] = amount;
         emit Approval(owner, spender, amount);
+    }
+
+    
+    function redeemAirdrop(uint256 amount) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
+        require(amount > 0, "Invalid staking amount");
+        require(_allocationBalances[address(this)][4] >= amount, "No airdrop balance available");
+
+        _allocationBalances[address(this)][4] = _allocationBalances[address(this)][4] - amount;
+        _transfer(address(this), msg.sender, amount);
+        
     }
 
     function startVesting(address account) external onlyOwner {
@@ -250,28 +266,6 @@ contract SpunkySDX is Ownable {
 
     function transferOwnership(address newOwner) public override onlyOwner {
         super.transferOwnership(newOwner);
-    }
-
-    function redeemUnsoldTokens(uint8 allocation) external onlyOwner {
-        require(allocation >= 1 && allocation <= 3, "Invalid allocation");
-
-        uint256 tokensToRedeem;
-
-        if (allocation == 1) {
-            // Redeem unsold tokens for whitelist allocation
-            tokensToRedeem = WHITELIST_ALLOCATION - _allocationBalances[address(this)][1];
-        } else if (allocation == 2) {
-            // Redeem unsold tokens for presale allocation
-            tokensToRedeem = PRESALE_ALLOCATION - _allocationBalances[address(this)][2];
-        } else if (allocation == 3) {
-            // Redeem unsold tokens for IEO allocation
-            tokensToRedeem = IEO_ALLOCATION - _allocationBalances[address(this)][3];
-        }
-
-        require(tokensToRedeem > 0, "No unsold tokens for the specified allocation");
-
-        // Transfer the unsold tokens to the contract owner
-        _transfer(address(this), owner(), tokensToRedeem);
     }
 
     modifier checkTransactionDelay() {
