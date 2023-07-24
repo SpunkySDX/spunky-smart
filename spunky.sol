@@ -40,8 +40,13 @@ contract SpunkySDX is Ownable {
     //Staking rewards
     uint256 public totalRewardsGiven = 0;
 
+    // Token burn details
+    uint256 public totalBurned;
+    uint256 public MAX_BURN = 0; 
+
     // Slippage tolerance
     uint256 private constant MAX_SLIPPAGE_TOLERANCE = 5;
+    uint256 public constant SELL_TAX_PERCENTAGE = 5;
 
     // Antibot features
     uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
@@ -71,6 +76,8 @@ contract SpunkySDX is Ownable {
     AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 4% of total supply
     TEAM_ALLOCATION = totalSupply * 6 / 100; // 6% of total supply
     STAKING_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
+    MAX_BURN = totalSupply * 10 / 100;  // 10% of total supply
+
     
     // Allocate tokens for the whitelist, presale, airdrop and IEO
     _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
@@ -102,9 +109,13 @@ contract SpunkySDX is Ownable {
     }
 
     function transfer(address recipient, uint256 amount) public checkTransactionDelay() checkMaxHolding(recipient, amount) returns (bool) {
-        _transfer(msg.sender, recipient, amount);
-        return true;
+     if (isSellTransaction(recipient)) {
+        amount = handleSellTax(amount);
+      }
+      _transfer(msg.sender, recipient, amount);
+      return true;
     }
+
 
     function allowance(address owner, address spender) public view returns (uint256) {
         return _allowances[owner][spender];
@@ -264,6 +275,28 @@ contract SpunkySDX is Ownable {
         totalRewardsGiven += rewards; // Increase the total amount of rewards given
         _transfer(address(this), msg.sender, rewards);
         emit ClaimRewards(msg.sender, rewards);
+    }
+
+    function isSellTransaction(address recipient) internal view returns (bool) {
+        return recipient == address(this);
+    }
+
+    function handleSellTax(uint256 amount) internal returns (uint256) {
+        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 100;
+        _balances[msg.sender] -= taxAmount;
+        _balances[owner()] += taxAmount;
+        return amount - taxAmount;
+    }
+
+    function burn(uint256 amount) public onlyOwner {
+        require(totalBurned + amount <= MAX_BURN, "Total burned exceeds max burn amount");
+        require(amount <= _balances[msg.sender], "Not enough tokens to burn");
+
+        _balances[msg.sender] -= amount;
+        totalSupply -= amount;
+        totalBurned += amount;
+
+        emit Transfer(msg.sender, address(0), amount);
     }
 
     function getStakingRewards(address staker) external view returns (uint256) {
