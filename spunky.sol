@@ -15,6 +15,12 @@ contract SpunkySDX is Ownable {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(uint8 => uint256)) private _allocationBalances;
 
+    // Define the staking plans
+    enum StakingPlan { ThirtyDays, NinetyDays, OneEightyDays, ThreeSixtyDays }
+ 
+    // Define the returns for each plan
+    mapping(StakingPlan => uint256) private _stakingPlanReturns;
+   
     // Token allowances
     mapping(address => mapping(address => uint256)) private _allowances;
 
@@ -28,6 +34,14 @@ contract SpunkySDX is Ownable {
     uint256 private constant STAKING_APY = 5;
     mapping(address => uint256) private _stakingBalances;
     mapping(address => uint256) private _stakingRewards;
+    mapping(StakingPlan => uint256) private _stakingPlanDurations;
+
+    // Vesting details
+    mapping(address => uint256) private _vestingSchedules;
+    mapping(address => uint256) private _vestingStarts;
+    mapping(address => uint256) private _vestingCliffs;
+    mapping(address => uint256) private _vestingEnds;
+    mapping(address => uint256) private _releasedAmounts;
 
     // Token distribution details
     uint256 private WHITELIST_ALLOCATION = 0; 
@@ -61,42 +75,53 @@ contract SpunkySDX is Ownable {
     event ClaimRewards(address indexed user, uint256 reward);
 
    constructor() {
-    name = "SpunkySDX";
-    symbol = "SSDX";
-    decimals = 18;
-    totalSupply = 500e9 * 10**uint256(decimals);
+        name = "SpunkySDX";
+        symbol = "SSDX";
+        decimals = 18;
+        totalSupply = 500e9 * 10**uint256(decimals);
 
-    // Initially assign all tokens to the contract itself
-    _balances[address(this)] = totalSupply;
+        // Initially assign all tokens to the contract itself
+        _balances[address(this)] = totalSupply;
 
-    // Token distribution details based on total supply
-    WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
-    PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
-    IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
-    AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 4% of total supply
-    TEAM_ALLOCATION = totalSupply * 6 / 100; // 6% of total supply
-    STAKING_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
-    MAX_BURN = totalSupply * 10 / 100;  // 10% of total supply
+        // Token distribution details based on total supply
+        WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
+        PRESALE_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
+        IEO_ALLOCATION = totalSupply * 8 / 100; // 8% of total supply
+        AIRDROP_ALLOCATION = totalSupply * 4 / 100; // 4% of total supply
+        TEAM_ALLOCATION = totalSupply * 6 / 100; // 6% of total supply
+        STAKING_ALLOCATION = totalSupply * 20 / 100; // 20% of total supply
+        MAX_BURN = totalSupply * 10 / 100;  // 10% of total supply
 
-    
-    // Allocate tokens for the whitelist, presale, airdrop and IEO
-    _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
-    _allocationBalances[address(this)][2] = PRESALE_ALLOCATION;
-    _allocationBalances[address(this)][3] = IEO_ALLOCATION;
-    _allocationBalances[address(this)][4] = AIRDROP_ALLOCATION;
-    _allocationBalances[address(this)][5] = TEAM_ALLOCATION;
-    _allocationBalances[address(this)][6] = STAKING_ALLOCATION;
+        // Define the returns for each staking plan
+        _stakingPlanReturns[StakingPlan.ThirtyDays] = 5;
+        _stakingPlanReturns[StakingPlan.NinetyDays] = 10;
+        _stakingPlanReturns[StakingPlan.OneEightyDays] = 30;
+        _stakingPlanReturns[StakingPlan.ThreeSixtyDays] = 50;
 
-    //Transfer Whitelist,presale and IEO allocation to the contract owner
-    _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION + TEAM_ALLOCATION);
-      
-    emit Transfer(address(0), address(this), totalSupply);
-    emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
-    emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
-    emit Transfer(address(this), address(this), IEO_ALLOCATION);
-    emit Transfer(address(this), address(this), AIRDROP_ALLOCATION);
-    emit Transfer(address(this), address(this), TEAM_ALLOCATION);
-    emit Transfer(address(this), address(this), STAKING_ALLOCATION);
+        // Initialize the durations for each staking plan
+        _stakingPlanDurations[StakingPlan.ThirtyDays] = 30;
+        _stakingPlanDurations[StakingPlan.NinetyDays] = 90;
+        _stakingPlanDurations[StakingPlan.OneEightyDays] = 180;
+        _stakingPlanDurations[StakingPlan.ThreeSixtyDays] = 360;
+        
+        // Allocate tokens for the whitelist, presale, airdrop and IEO
+        _allocationBalances[address(this)][1] = WHITELIST_ALLOCATION;
+        _allocationBalances[address(this)][2] = PRESALE_ALLOCATION;
+        _allocationBalances[address(this)][3] = IEO_ALLOCATION;
+        _allocationBalances[address(this)][4] = AIRDROP_ALLOCATION;
+        _allocationBalances[address(this)][5] = TEAM_ALLOCATION;
+        _allocationBalances[address(this)][6] = STAKING_ALLOCATION;
+
+        //Transfer Whitelist,presale and IEO allocation to the contract owner
+        _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION + TEAM_ALLOCATION);
+        
+        emit Transfer(address(0), address(this), totalSupply);
+        emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
+        emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
+        emit Transfer(address(this), address(this), IEO_ALLOCATION);
+        emit Transfer(address(this), address(this), AIRDROP_ALLOCATION);
+        emit Transfer(address(this), address(this), TEAM_ALLOCATION);
+        emit Transfer(address(this), address(this), STAKING_ALLOCATION);
     }
 
     function balanceOf(address account) public view returns (uint256) {
@@ -157,8 +182,11 @@ contract SpunkySDX is Ownable {
         uint256 slippageTolerance = amount * (MAX_SLIPPAGE_TOLERANCE / 100);
         uint256 minAmount = amount - slippageTolerance;
         uint256 maxAmount = amount + slippageTolerance;
-        require(_balances[recipient] >= minAmount && _balances[recipient] <= maxAmount, "Amount exceeds recipient's balance");
-
+        
+        if(msg.sender != owner()) {
+          require(_balances[recipient] >= minAmount && _balances[recipient] <= maxAmount, "Amount exceeds recipient's balance");
+        }
+        
         _balances[sender] -= amount;
         _balances[recipient] += amount;
 
@@ -226,34 +254,33 @@ contract SpunkySDX is Ownable {
         return (tokensToRelease, tokensReleased, newTokensReleased);
     }
 
-    function calculateStakingReward(uint256 amount, uint256 duration) internal pure returns (uint256) {
+    function calculateStakingReward(uint256 amount, StakingPlan plan) internal view returns (uint256) {
         require(amount > 0, "Invalid staking amount");
-        require(duration > 0, "Invalid staking duration");
 
-        uint256 rewardPercentage = (STAKING_APY * duration) / 365 days;
+        uint256 rewardPercentage = _stakingPlanReturns[plan];
         return (amount * rewardPercentage) / 100;
     }
 
-    function updateStakingRewards(address staker, uint256 amount, uint256 duration) internal {
-        require(duration > 0, "Invalid staking duration");
+    function updateStakingRewards(address staker, uint256 amount, StakingPlan plan) internal {
         require(staker != address(0), "Invalid staker address");
         require(amount > 0, "Invalid staking amount");
 
-        uint256 rewards = calculateStakingReward(amount, duration);
+        uint256 rewardPercentage = _stakingPlanReturns[plan];
+        uint256 rewards = (amount * rewardPercentage) / 100; // assuming that the reward percentage is a whole number
+
         _stakingRewards[staker] = _stakingRewards[staker] + rewards;
     }
 
-    function stake(uint256 amount, uint256 lockupDuration) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
+    function stake(uint256 amount, StakingPlan plan) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
         require(amount > 0, "Invalid staking amount");
-        require(lockupDuration > 0, "Invalid lockup duration");
 
-        uint256 potentialReward = calculateStakingReward(amount, lockupDuration);
+        uint256 potentialReward = calculateStakingReward(amount, plan);
         require(totalRewardsGiven + potentialReward <= STAKING_ALLOCATION, "Staking rewards exhausted");
 
         _transfer(msg.sender, address(this), amount);
         _stakingBalances[msg.sender] = _stakingBalances[msg.sender] + amount;
 
-        updateStakingRewards(msg.sender, amount, lockupDuration);
+        updateStakingRewards(msg.sender, amount, plan);
         emit Stake(msg.sender, amount);
     }
 
