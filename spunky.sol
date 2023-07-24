@@ -258,7 +258,7 @@ contract SpunkySDX is Ownable {
         require(amount > 0, "Invalid staking amount");
 
         uint256 rewardPercentage = _stakingPlanReturns[plan];
-        return (amount * rewardPercentage) / 100;
+        return (amount * rewardPercentage) / 10000;
     }
 
     function updateStakingRewards(address staker, uint256 amount, StakingPlan plan) internal {
