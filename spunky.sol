@@ -372,7 +372,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         VestingDetail[] storage vestingDetails = _vestingDetails[account];
         for (uint256 i = 0; i < vestingDetails.length; i++) {
             VestingDetail storage vesting = vestingDetails[i];
-            if (vesting.amount > 0) {
+            if (vesting.amount > 0 && vesting.amount > vesting.releasedAmount) {
                 release(account, vesting);
             }
         }
