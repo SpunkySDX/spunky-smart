@@ -327,7 +327,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         uint256 cliffDuration,
         uint256 vestingDuration
     ) public onlyOwner {
-        _transfer(account, address(this), amount);
+        _transfer(msg.sender, address(this), amount);
         addVestingSchedule(account, amount, cliffDuration, vestingDuration);
     }
 
@@ -372,7 +372,11 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         VestingDetail[] storage vestingDetails = _vestingDetails[account];
         for (uint256 i = 0; i < vestingDetails.length; i++) {
             VestingDetail storage vesting = vestingDetails[i];
-            if (vesting.amount > 0 && vesting.amount > vesting.releasedAmount) {
+            if (
+                vesting.amount > 0 &&
+                vesting.amount > vesting.releasedAmount &&
+                block.timestamp >= vesting.startTime + vesting.cliffDuration
+            ) {
                 release(account, vesting);
             }
         }
