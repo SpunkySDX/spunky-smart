@@ -39,8 +39,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         private _accruedStakingRewards;
     mapping(address => mapping(StakingPlan => uint256))
         private _stakingStartTimes;
-    mapping(address => mapping(StakingPlan => uint256))
-        private _stakingRewardTimes;
 
     mapping(StakingPlan => uint256) private _stakingPlanDurations;
 
@@ -49,7 +47,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         address owner;
         uint256 amount;
         uint256 startTime;
-        uint256 rewardTime;
         StakingPlan plan;
         uint256 reward;
         uint256 accruedReward;
@@ -465,11 +462,12 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         // uint256 fixedPlanDuration = _stakingPlanDurations[plan] * 1 days;
         // uint256 timeForFixedPlanEnd = _stakingStartTimes[msg.sender][plan] +
         //     fixedPlanDuration;
+        uint256 ai = _stakingPlanDurations[plan] / 365;
 
         // If it's a Flexible plan, consider the number of days staked
         if (plan == StakingPlan.Flexible) {
             uint256 daysStaked = (block.timestamp -
-                _stakingRewardTimes[msg.sender][plan]) / 365 days;
+                _stakingStartTimes[msg.sender][plan]) / 365 days;
             return (amount * rewardPercentage * daysStaked) / 1000; // APY 0.1%
         }
 
@@ -484,7 +482,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         uint256 rewardPercentage = _stakingPlanReturns[plan];
         uint256 rewardDuration = _stakingPlanDurations[plan];
         uint256 elapseTime = (block.timestamp -
-            _stakingRewardTimes[msg.sender][plan]);
+            _stakingStartTimes[msg.sender][plan]);
 
         uint256 accruedRatio = elapseTime / (rewardDuration * 1 days);
 
@@ -525,7 +523,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
             owner: msg.sender,
             amount: amount,
             startTime: block.timestamp,
-            rewardTime: block.timestamp,
             plan: plan,
             reward: reward,
             accruedReward: 0,
@@ -554,7 +551,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
 
         // Update the staking balance and start time
         _stakingBalances[msg.sender][plan] += additionalAmount;
-        _stakingRewardTimes[msg.sender][plan] = block.timestamp;
+        _stakingStartTimes[msg.sender][plan] = block.timestamp;
 
         // Calculate the new reward and update the reward balance
         uint256 newReward = calculateStakingReward(
