@@ -28,6 +28,9 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     // Define the returns for each plan
     mapping(StakingPlan => uint256) private _stakingPlanReturns;
 
+    // Define the duration for each plan
+    mapping(StakingPlan => uint256) private _stakingPlanDurations;
+
     // Token allowances
     mapping(address => mapping(address => uint256)) private _allowances;
 
@@ -39,8 +42,10 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         private _accruedStakingRewards;
     mapping(address => mapping(StakingPlan => uint256))
         private _stakingStartTimes;
-
-    mapping(StakingPlan => uint256) private _stakingPlanDurations;
+    // To map the index index  of each Staking Plan to users address
+    mapping(address => mapping(StakingPlan => uint256))
+        private _stakingDetailsIndex;
+    mapping(address => mapping(StakingPlan => bool)) private _hasStakingDetails;
 
     // staking details
     struct StakingDetail {
@@ -459,19 +464,13 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     ) internal view returns (uint256) {
         require(amount > 0, "Invalid staking amount");
         uint256 rewardPercentage = _stakingPlanReturns[plan];
-        // uint256 fixedPlanDuration = _stakingPlanDurations[plan] * 1 days;
-        // uint256 timeForFixedPlanEnd = _stakingStartTimes[msg.sender][plan] +
-        //     fixedPlanDuration;
-        uint256 ai = _stakingPlanDurations[plan] / 365;
+        uint256 daysRatio = _stakingPlanDurations[plan] / 365;
 
-        // If it's a Flexible plan, consider the number of days staked
         if (plan == StakingPlan.Flexible) {
-            uint256 daysStaked = (block.timestamp -
-                _stakingStartTimes[msg.sender][plan]) / 365 days;
-            return (amount * rewardPercentage * daysStaked) / 1000; // APY 0.1%
+            return 0;
         }
 
-        return (amount * rewardPercentage) / 1000;
+        return (amount * rewardPercentage * daysRatio) / 1000;
     }
 
     function calculateAccruedReward(
@@ -480,19 +479,20 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     ) internal view returns (uint256) {
         require(amount > 0, "Invalid staking amount");
         uint256 rewardPercentage = _stakingPlanReturns[plan];
-        uint256 rewardDuration = _stakingPlanDurations[plan];
         uint256 elapseTime = (block.timestamp -
             _stakingStartTimes[msg.sender][plan]);
+        uint256 noDays = elapseTime / 1 days;
 
-        uint256 accruedRatio = elapseTime / (rewardDuration * 1 days);
-
-        // If it's a Flexible plan, consider the number of days staked
-        if (plan == StakingPlan.Flexible) {
-            uint256 daysRatio = elapseTime / 365 days;
-            return (amount * rewardPercentage * daysRatio) / 1000; // APY 0.1%
+        if (
+            noDays > _stakingPlanDurations[plan] && plan != StakingPlan.Flexible
+        ) {
+            noDays = _stakingPlanDurations[plan];
         }
 
-        return (amount * rewardPercentage * accruedRatio) / 1000;
+        // Total days accrued in relation to 365 days (1 year);
+        uint256 daysRatio = noDays / 365;
+
+        return (amount * rewardPercentage * daysRatio) / 1000;
     }
 
     function stake(
@@ -506,6 +506,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         );
 
         uint256 reward = calculateStakingReward(amount, plan);
+
         require(
             _allocationBalances[address(this)][6] >= reward,
             "Staking rewards exhausted"
@@ -528,11 +529,18 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
             accruedReward: 0,
             isActive: true
         });
-        _stakingDetails.push(newStaking);
+        bool isDetails = _hasStakingDetails[msg.sender][plan];
+        if (isDetails) {
+            uint256 indexDetails = _stakingDetailsIndex[msg.sender][plan];
+            _stakingDetails[indexDetails] = newStaking;
+        } else {
+            _stakingDetailsIndex[msg.sender][plan] = _stakingDetails.length;
+            _stakingDetails.push(newStaking);
+        }
         emit Stake(msg.sender, amount, plan);
     }
 
-    function updateStake(
+    function addToStake(
         uint256 additionalAmount,
         StakingPlan plan
     ) external nonReentrant {
@@ -558,24 +566,46 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
             _stakingBalances[msg.sender][plan],
             plan
         );
-        _stakingRewards[msg.sender][plan] = newReward;
+
+        require(
+            _allocationBalances[address(this)][6] >= newReward,
+            "Staking rewards exhausted"
+        );
+
+        // adjust allocation balance to update
+        _allocationBalances[address(this)][6] +=
+            _stakingRewards[msg.sender][plan] -
+            accruedReward -
+            newReward;
 
         // Transfer the additional staked amount from the user to the contract
         _transfer(msg.sender, address(this), additionalAmount);
 
+        // update staking details
+        uint256 detailsIndex = _stakingDetailsIndex[msg.sender][plan];
+        _stakingDetails[detailsIndex] = StakingDetail({
+            owner: msg.sender,
+            amount: _stakingBalances[msg.sender][plan],
+            startTime: block.timestamp,
+            plan: plan,
+            reward: newReward,
+            accruedReward: _accruedStakingRewards[msg.sender][plan],
+            isActive: true
+        });
+
+        // emit update
         emit UpdateStake(msg.sender, _stakingBalances[msg.sender][plan], plan);
     }
 
-    function unstake(StakingPlan plan) external nonReentrant {
+    function claimReward(StakingPlan plan) internal {
         require(msg.sender != owner(), "Owner can not stake");
-
         require(
             _stakingBalances[msg.sender][plan] > 0,
             "No staking balance available"
         );
 
         uint256 amount = _stakingBalances[msg.sender][plan];
-        uint256 reward = 0;
+        uint256 reward = _accruedStakingRewards[msg.sender][plan];
 
         // Check if the unstaking request is made after the plan duration
         bool isAfterPlanDuration = block.timestamp >=
@@ -586,18 +616,141 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         // If it's a Flexible plan or after the plan duration for other plans, calculate the reward
         if (plan == StakingPlan.Flexible) {
             require(isAfterPlanDuration, "Cannot unstake before 48 hours");
-            reward = calculateStakingReward(amount, plan);
-        } else if (isAfterPlanDuration) {
-            reward = calculateStakingReward(amount, plan);
+            uint256 addedReward = calculateAccruedReward(amount, plan);
+            // update allocation balance
+            if (_allocationBalances[address(this)][6] >= addedReward) {
+                _allocationBalances[address(this)][6] -= addedReward;
+                reward += addedReward;
+            } else {
+                _allocationBalances[address(this)][6] = 0;
+                reward += _allocationBalances[address(this)][6];
+            }
+        } else {
+            // If unstaking before the plan duration for non-flexible plans, reward remains 0
+            require(isAfterPlanDuration, "Cannot unstake before duration");
+            reward += _stakingRewards[msg.sender][plan];
         }
-        // If unstaking before the plan duration for non-flexible plans, reward remains 0
 
-        _transfer(address(this), msg.sender, amount + reward); // Include reward in the transfer
+        uint256 newReward = calculateStakingReward(
+            _stakingBalances[msg.sender][plan],
+            plan
+        );
+
+        _transfer(address(this), msg.sender, reward); // Include reward in the transfer
+        _accruedStakingRewards[msg.sender][plan] = 0; //  reset accrued reward to 0
+        _stakingRewards[msg.sender][plan] = newReward; //  reset reward to 0
+        _stakingStartTimes[msg.sender][plan] = block.timestamp; //  reset startTime to blockTime
+
+        // First add the previous calculated reward then subtract the current calculated reward to allocation
+        if (_allocationBalances[address(this)][6] != 0) {
+            _allocationBalances[address(this)][6] +=
+                _stakingRewards[msg.sender][plan] -
+                newReward;
+        }
+
+        uint256 detailsIndex = _stakingDetailsIndex[msg.sender][plan];
+        _stakingDetails[detailsIndex] = StakingDetail({
+            owner: msg.sender,
+            amount: amount,
+            startTime: block.timestamp,
+            plan: plan,
+            reward: newReward,
+            accruedReward: 0,
+            isActive: true
+        });
+
+        // emit update
+        emit UpdateStake(msg.sender, _stakingBalances[msg.sender][plan], plan);
+        //  emit claim reward
+        emit ClaimRewards(msg.sender, reward);
+    }
+
+    function userClaimReward(StakingPlan plan) external nonReentrant {
+        claimReward(plan);
+    }
+
+    function unstake(StakingPlan plan) external nonReentrant {
+        require(msg.sender != owner(), "Owner can not stake");
+        require(
+            _stakingBalances[msg.sender][plan] > 0,
+            "No staking balance available"
+        );
+
+        uint256 amount = _stakingBalances[msg.sender][plan];
+
+        // call claim
+        claimReward(plan);
+        _transfer(address(this), msg.sender, amount); // transfer only amount to user
         _stakingBalances[msg.sender][plan] = 0;
         _stakingRewards[msg.sender][plan] = 0;
         _accruedStakingRewards[msg.sender][plan] = 0;
 
+        uint256 detailsIndex = _stakingDetailsIndex[msg.sender][plan];
+        _stakingDetails[detailsIndex] = StakingDetail({
+            owner: msg.sender,
+            amount: 0,
+            startTime: block.timestamp,
+            plan: plan,
+            reward: 0,
+            accruedReward: 0,
+            isActive: false
+        });
+        emit UpdateStake(msg.sender, 0, plan);
         emit Unstake(msg.sender, amount, plan);
+    }
+
+    function hasStakingDetails(StakingPlan plan) external view returns (bool) {
+        return _hasStakingDetails[msg.sender][plan];
+    }
+
+    function getUserStakingDetail(
+        StakingPlan plan
+    ) external view returns (StakingDetail memory) {
+        uint256 detailsIndex = _stakingDetailsIndex[msg.sender][plan];
+        return _stakingDetails[detailsIndex];
+    }
+
+    function getStakingDetailsCount() external view returns (uint256) {
+        return _stakingDetails.length;
+    }
+
+    function getStakingReward(
+        StakingPlan plan
+    ) external view returns (uint256) {
+        uint256 additional = 0;
+        bool isActive = _hasStakingDetails[msg.sender][plan];
+
+        // return zero if not existing;
+        if (!isActive) {
+            return 0;
+        }
+
+        if (_allocationBalances[address(this)][6] == 0) {
+            additional = 0;
+        } else {
+            uint256 amount = _stakingBalances[msg.sender][plan];
+            additional = calculateAccruedReward(amount, plan);
+        }
+
+        return _accruedStakingRewards[msg.sender][plan] + additional;
+    }
+
+    function getStakingDetailsPage(
+        uint256 start,
+        uint256 end
+    ) public view returns (StakingDetail[] memory) {
+        require(
+            start <= end && end < _stakingDetails.length,
+            "Invalid indices"
+        );
+
+        StakingDetail[] memory page = new StakingDetail[](end - start + 1);
+
+        for (uint256 i = start; i <= end; i++) {
+            page[i - start] = _stakingDetails[i];
+        }
+
+        return page;
     }
 
     function isSellTransaction(address recipient) internal view returns (bool) {
@@ -615,20 +768,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         totalBurned += amount;
         emit Transfer(msg.sender, address(0), amount);
         emit Burn(msg.sender, amount);
-    }
-
-    function getStakingRewards(
-        address staker,
-        StakingPlan plan
-    ) external view returns (uint256) {
-        return _stakingRewards[staker][plan];
-    }
-
-    function getStakingBalance(
-        address staker,
-        StakingPlan plan
-    ) external view returns (uint256) {
-        return _stakingBalances[staker][plan];
     }
 
     function buyTokens()
