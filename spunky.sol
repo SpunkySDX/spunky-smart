@@ -730,6 +730,18 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return userStake.accruedReward + additional;
     }
 
+    function getAllStakingBalances(
+        address user
+    ) public view returns (uint256[] memory) {
+        uint256[] memory balances = new uint256[](5); // Assuming 5 plans
+        balances[0] = _userStakes[user][StakingPlan.ThirtyDays].amount;
+        balances[1] = _userStakes[user][StakingPlan.NinetyDays].amount;
+        balances[2] = _userStakes[user][StakingPlan.OneEightyDays].amount;
+        balances[3] = _userStakes[user][StakingPlan.ThreeSixtyDays].amount;
+        balances[4] = _userStakes[user][StakingPlan.Flexible].amount;
+        return balances;
+    }
+
     function getStakingDetailsPage(
         uint256 start,
         uint256 end
