@@ -672,6 +672,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
 
         if (!isAfterPlanDuration) {
             _allocationBalances[address(this)][6] += reward;
+            reward = 0;
         }
 
         _transfer(address(this), msg.sender, userStake.amount + reward); // transfer only amount to user
