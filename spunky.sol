@@ -671,7 +671,9 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         uint256 reward = claimReward(plan);
 
         if (!isAfterPlanDuration) {
-            _allocationBalances[address(this)][6] += reward;
+            _allocationBalances[address(this)][6] +=
+                userStake.reward +
+                userStake.accruedReward;
             reward = 0;
         }
 
