@@ -9,7 +9,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     // Token details
     string public name;
     string public symbol;
-    uint8 public _decimals;
+    uint8  public _decimals;
     uint256 public totalSupply;
 
     // Token balances
@@ -80,14 +80,17 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     uint256 private AIRDROP_ALLOCATION = 0;
     uint256 private TEAM_ALLOCATION = 0;
     uint256 private STAKING_ALLOCATION = 0;
+    uint256 private ECOSYSTEM_DEV_ALLOCATION = 0;
     uint256 private INVESTORS_ALLOCATION = 0;
+    uint256 private LIQUIDITY_ALLOCATION = 0;
+    uint256 private MAX_BURN = 0;
+    uint256 private MAX_BUY_BACK = 0;
 
     //Staking rewards
     uint256 public totalRewardsGiven = 0;
 
     // Token burn details
     uint256 public totalBurned;
-    uint256 public MAX_BURN = 0;
 
     // Slippage tolerance, Airdrop
     uint256 public constant SELL_TAX_PERCENTAGE = 5;
@@ -98,6 +101,9 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
     uint256 private constant TRANSACTION_DELAY = 2.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
+
+    //Sell Tax Address
+    address public constant SELL_TAX_ADDRESS = 0xF79948ACf0a91bD93513C76651a12291E44D2872;
 
     //Events
     event Transfer(address indexed from, address indexed to, uint256 value);
@@ -120,10 +126,11 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     event Burn(address indexed account, uint256 amount);
     event TokensReleased(address indexed account, uint256 amount);
     event BuyTokens(uint256 amount);
+    event Withdrawn(uint256 amount);
 
     constructor() {
-        name = "Spunky0123";
-        symbol = "SP0123";
+        name = "SpunkySDX";
+        symbol = "SSDX";
         _decimals = 18;
         totalSupply = 500e9 * 10 ** uint256(_decimals);
         // Initially assign all tokens to the contract itself
@@ -131,7 +138,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
 
         //Chainlink Aggregator contract address
         priceFeed = AggregatorV3Interface(
-            0x694AA1769357215DE4FAC081bf1f309aDC325306
+            0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419
         );
 
         // Token distribution details based on total supply
@@ -140,9 +147,13 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         IEO_ALLOCATION = (totalSupply * 8) / 100; // 8% of total supply
         AIRDROP_ALLOCATION = (totalSupply * 4) / 100; // 4% of total supply
         TEAM_ALLOCATION = (totalSupply * 6) / 100; // 6% of total supply
-        STAKING_ALLOCATION = (totalSupply * 15) / 100; // 15% of total supply
+        STAKING_ALLOCATION = (totalSupply * 8) / 100; // 8% of total supply
+        ECOSYSTEM_DEV_ALLOCATION = (totalSupply * 7) / 100; // 7% of total supply
         INVESTORS_ALLOCATION = (totalSupply * 5) / 100; // 5% of total supply
-        MAX_BURN = (totalSupply * 10) / 100; // 10% of total supply
+        LIQUIDITY_ALLOCATION = (totalSupply * 30) / 100; // 30% of total supply
+        MAX_BURN = (totalSupply * 8) / 100; // 10% of total supply
+        MAX_BUY_BACK = (totalSupply * 2) / 100; // 2% of total supply
+
 
         // Define the returns for each staking plan
         _stakingPlanReturns[StakingPlan.ThirtyDays] = 5;
@@ -166,16 +177,21 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         _allocationBalances[address(this)][5] = TEAM_ALLOCATION;
         _allocationBalances[address(this)][6] = STAKING_ALLOCATION;
         _allocationBalances[address(this)][7] = INVESTORS_ALLOCATION;
+        _allocationBalances[address(this)][8] = LIQUIDITY_ALLOCATION;
+        _allocationBalances[address(this)][9] = MAX_BURN;
+        _allocationBalances[address(this)][10] = ECOSYSTEM_DEV_ALLOCATION;
+
+        uint256 liquidity=LIQUIDITY_ALLOCATION * 17/100;
+        _allocationBalances[address(this)][8] -= liquidity; 
+
         //Transfer Team and IEO allocation to the contract owner
-        _transfer(address(this), owner(), IEO_ALLOCATION + TEAM_ALLOCATION);
+        _transfer(address(this), owner(), IEO_ALLOCATION + TEAM_ALLOCATION +  ECOSYSTEM_DEV_ALLOCATION + INVESTORS_ALLOCATION + MAX_BURN + MAX_BUY_BACK + liquidity);
 
         emit Transfer(address(0), address(this), totalSupply);
-        emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
         emit Transfer(address(this), address(this), PRESALE_ALLOCATION);
-        emit Transfer(address(this), address(this), IEO_ALLOCATION);
         emit Transfer(address(this), address(this), AIRDROP_ALLOCATION);
         emit Transfer(address(this), address(this), TEAM_ALLOCATION);
-        emit Transfer(address(this), address(this), STAKING_ALLOCATION);
+        emit Transfer(address(this), address(this), STAKING_ALLOCATION);      
     }
 
     function getSymbol() public view returns (string memory) {
@@ -219,7 +235,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         if (isSellTransaction(recipient)) {
             uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 100;
             amount -= taxAmount;
-            _transfer(msg.sender, owner(), taxAmount);
+            _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
         }
         _transfer(msg.sender, recipient, amount);
         return true;
@@ -855,6 +871,15 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
             "Owner cannot withdraw SSDX tokens in contract"
         );
         token.transfer(owner(), tokenAmount);
+    }
+
+    function withdraw() external onlyOwner {
+       require(isPresale == false, "Presale is still active");
+
+       uint256 amount = address(this).balance;
+       payable(owner()).transfer(amount);
+
+       emit Withdrawn(amount);
     }
 
     function endPresale() external onlyOwner {
