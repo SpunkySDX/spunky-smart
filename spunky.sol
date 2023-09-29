@@ -205,11 +205,6 @@ abstract contract ReentrancyGuard {
     }
 }
 
-
-// File: SpunkySDX.sol
-
- pragma solidity >=0.8.0 <0.9.0;
-
  contract SpunkySDX is Ownable, ReentrancyGuard {
     // Token details
     string public name;
@@ -246,7 +241,7 @@ abstract contract ReentrancyGuard {
         symbol = "SSDX";
         _decimals = 18;
         totalSupply = 500e9 * 10 ** uint256(_decimals);
-
+        _balances[address(this)] = totalSupply;
         //Transfer Team and IEO allocation to the contract owner
         _transfer(address(this), owner(), totalSupply);
 
