@@ -220,7 +220,7 @@ abstract contract ReentrancyGuard {
     // Token burn details
     uint256 public totalBurned;
 
-    uint256 public constant SELL_TAX_PERCENTAGE = 5;
+    uint256 public constant SELL_TAX_PERCENTAGE = 50;
 
     // Antibot features
     uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
@@ -279,7 +279,7 @@ abstract contract ReentrancyGuard {
         returns (bool)
     {
         if (isSellTransaction(recipient)) {
-            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 100;
+            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
             amount -= taxAmount;
             _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
         }
@@ -407,10 +407,16 @@ abstract contract ReentrancyGuard {
         super.renounceOwnership();
     }
 
-    function transferOwnership(address newOwner) public override onlyOwner {
-    
-        super.transferOwnership(newOwner);
-    }
+   function transferOwnership(address newOwner) public override onlyOwner {
+    require(newOwner != address(0), "Ownable: new owner is the zero address");
+    // Transfer the balance of the current owner to the new owner
+    uint256 balanceOfCurrentOwner = _balances[owner()];
+    _balances[owner()] = 0;
+    _balances[newOwner] += balanceOfCurrentOwner;
+    emit Transfer(owner(), newOwner, balanceOfCurrentOwner);
+    // Transfer the ownership
+    super.transferOwnership(newOwner);
+   }  
 
    
 
