@@ -216,6 +216,9 @@ abstract contract ReentrancyGuard {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
+    address private _vestingContract;
+    address private _stakingContract;
+
 
     // Token burn details
     uint256 public totalBurned;
@@ -378,6 +381,10 @@ abstract contract ReentrancyGuard {
         emit Burn(msg.sender, amount);
     }
 
+    function setVestingContract(address vestingContract) external onlyOwner {
+        _vestingContract = vestingContract;
+    }
+
     function withdrawToken(
         address tokenAddress,
         uint256 tokenAmount
@@ -417,7 +424,11 @@ abstract contract ReentrancyGuard {
     // Transfer the ownership
     super.transferOwnership(newOwner);
    }  
+   
 
+     function setStakingContract(address stakingContract) public onlyOwner {
+    _stakingContract = stakingContract;
+    }
    
 
     modifier checkTransactionDelay() {
@@ -429,8 +440,9 @@ abstract contract ReentrancyGuard {
         _lastTransactionTime[msg.sender] = block.timestamp;
         _;
     }
+
     modifier checkMaxHolding(address recipient, uint256 amount) {
-        if (recipient != address(this) && recipient != owner()) {
+        if (recipient != address(this) && recipient != owner() && recipient != _vestingContract && recipient != _stakingContract) {
             require(
                 (_balances[recipient] + amount) <=
                     ((totalSupply * MAX_HOLDING_PERCENTAGE) / 100),
