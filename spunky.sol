@@ -216,6 +216,10 @@ abstract contract ReentrancyGuard {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
+    mapping(address => bool) public blacklists;
+
+    mapping(address => bool) public whitelists;
+
     address private _vestingContract;
     address private _stakingContract;
 
@@ -227,7 +231,7 @@ abstract contract ReentrancyGuard {
 
     // Antibot features
     uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
-    uint256 private constant TRANSACTION_DELAY = 2.5 minutes;
+    uint256 private constant TRANSACTION_DELAY = 1.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
     //Sell Tax Address
@@ -351,13 +355,21 @@ abstract contract ReentrancyGuard {
         uint256 amount
     ) internal {
         require(sender != address(0), "ERC20: transfer from the zero address");
-        require(recipient != address(0), "ERC20: transfer to the zero address");
         require(amount > 0, "ERC20: transfer amount must be greater than zero");
         require(_balances[sender] >= amount, "ERC20: insufficient balance");
+        require(!blacklists[sender], "Blacklisted address");
 
-        _balances[sender] -= amount;
-        _balances[recipient] += amount;
-        emit Transfer(sender, recipient, amount);
+        if (recipient == address(0)){
+         _balances[recipient] -= amount;
+         totalSupply -= amount;
+         totalBurned += amount;
+         emit Transfer(recipient, address(0), amount);
+         emit Burn(recipient, amount);
+        }else{
+          _balances[sender] -= amount;
+          _balances[recipient] += amount;
+          emit Transfer(sender, recipient, amount);
+        }
     }
 
     function _approve(address owner, address spender, uint256 amount) internal {
@@ -410,7 +422,6 @@ abstract contract ReentrancyGuard {
     }
 
     function renounceOwnership() public override onlyOwner {
-        // Prevent renouncing ownership if there are staking rewards available
         super.renounceOwnership();
     }
 
@@ -425,11 +436,17 @@ abstract contract ReentrancyGuard {
     super.transferOwnership(newOwner);
    }  
    
-
      function setStakingContract(address stakingContract) public onlyOwner {
-    _stakingContract = stakingContract;
+      _stakingContract = stakingContract;
+    }
+
+     function blacklist(address _address, bool _isBlacklisting) external onlyOwner {
+        blacklists[_address] = _isBlacklisting;
     }
    
+   function whietlist(address _address, bool _isWhitelisting) external onlyOwner {
+        whitelists[_address] = _isWhitelisting;
+    }
 
     modifier checkTransactionDelay() {
         require(
@@ -442,7 +459,7 @@ abstract contract ReentrancyGuard {
     }
 
     modifier checkMaxHolding(address recipient, uint256 amount) {
-        if (recipient != address(this) && recipient != owner() && recipient != _vestingContract && recipient != _stakingContract) {
+        if (recipient != address(this) && recipient != owner() && recipient != _vestingContract && recipient != _stakingContract && whitelists[recipient] == false ) {
             require(
                 (_balances[recipient] + amount) <=
                     ((totalSupply * MAX_HOLDING_PERCENTAGE) / 100),
