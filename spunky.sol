@@ -216,8 +216,6 @@ abstract contract ReentrancyGuard {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
-    mapping(address => bool) public blacklists;
-
     mapping(address => bool) public whitelists;
 
     address private _vestingContract;
@@ -357,14 +355,12 @@ abstract contract ReentrancyGuard {
         require(sender != address(0), "ERC20: transfer from the zero address");
         require(amount > 0, "ERC20: transfer amount must be greater than zero");
         require(_balances[sender] >= amount, "ERC20: insufficient balance");
-        require(!blacklists[sender], "Blacklisted address");
 
         if (recipient == address(0)){
          _balances[recipient] -= amount;
          totalSupply -= amount;
          totalBurned += amount;
          emit Transfer(recipient, address(0), amount);
-         emit Burn(recipient, amount);
         }else{
           _balances[sender] -= amount;
           _balances[recipient] += amount;
@@ -391,10 +387,6 @@ abstract contract ReentrancyGuard {
         totalBurned += amount;
         emit Transfer(msg.sender, address(0), amount);
         emit Burn(msg.sender, amount);
-    }
-
-    function setVestingContract(address vestingContract) external onlyOwner {
-        _vestingContract = vestingContract;
     }
 
     function withdrawToken(
@@ -436,14 +428,6 @@ abstract contract ReentrancyGuard {
     super.transferOwnership(newOwner);
    }  
    
-     function setStakingContract(address stakingContract) public onlyOwner {
-      _stakingContract = stakingContract;
-    }
-
-     function blacklist(address _address, bool _isBlacklisting) external onlyOwner {
-        blacklists[_address] = _isBlacklisting;
-    }
-   
    function whietlist(address _address, bool _isWhitelisting) external onlyOwner {
         whitelists[_address] = _isWhitelisting;
     }
@@ -459,7 +443,7 @@ abstract contract ReentrancyGuard {
     }
 
     modifier checkMaxHolding(address recipient, uint256 amount) {
-        if (recipient != address(this) && recipient != owner() && recipient != _vestingContract && recipient != _stakingContract && whitelists[recipient] == false ) {
+        if (recipient != address(this) && recipient != owner() && whitelists[recipient] == false ) {
             require(
                 (_balances[recipient] + amount) <=
                     ((totalSupply * MAX_HOLDING_PERCENTAGE) / 100),
