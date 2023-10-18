@@ -232,6 +232,8 @@ abstract contract ReentrancyGuard {
     uint256 private constant TRANSACTION_DELAY = 1.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
+    address public constant pancakeswapPair = <PancakeSwap Pair Address>;
+
     //Sell Tax Address
     address public constant SELL_TAX_ADDRESS = 0xF79948ACf0a91bD93513C76651a12291E44D2872;
 
@@ -283,7 +285,7 @@ abstract contract ReentrancyGuard {
         checkMaxHolding(recipient, amount)
         returns (bool)
     {
-        if (isSellTransaction(recipient)) {
+        if (isSellTransaction(msg.sender,recipient)) {
             uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
             amount -= taxAmount;
             _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
@@ -375,8 +377,8 @@ abstract contract ReentrancyGuard {
         emit Approval(owner, spender, amount);
     }
 
-    function isSellTransaction(address recipient) internal view returns (bool) {
-        return recipient == address(this);
+    function isSellTransaction(address sender, address recipient) internal view returns (bool) {
+     return sender == pancakeswapPair && recipient != address(this);
     }
 
     function burn(uint256 amount) public onlyOwner {
