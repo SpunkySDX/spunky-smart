@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 
 pragma solidity >=0.8.0 <0.9.0;
+import "@openzeppelin/contracts/utils/Address.sol";
 
 interface IERC20 {
     /**
@@ -232,7 +233,7 @@ abstract contract ReentrancyGuard {
     uint256 private constant TRANSACTION_DELAY = 1.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
-    address public constant pancakeswapPair = <PancakeSwap Pair Address>;
+    address public pancakeswapPair; //To be replaced with Pancakeswap Pair Address `
 
     //Sell Tax Address
     address public constant SELL_TAX_ADDRESS = 0xF79948ACf0a91bD93513C76651a12291E44D2872;
@@ -242,8 +243,9 @@ abstract contract ReentrancyGuard {
     event Approval(address indexed owner,  address indexed spender, uint256 value);
     event Burn(address indexed account, uint256 amount);
     event Withdrawn(uint256 amount);
+    event Whitelisted(address indexed);
 
-    constructor() {
+    constructor(address _pancakeswapPair) {
         name = "SpunkySDX";
         symbol = "SSDX";
         _decimals = 18;
@@ -251,6 +253,7 @@ abstract contract ReentrancyGuard {
         _balances[address(this)] = totalSupply;
         //Transfer Team and IEO allocation to the contract owner
         _transfer(address(this), owner(), totalSupply);
+        pancakeswapPair = _pancakeswapPair;
 
         emit Transfer(address(0), address(this), totalSupply);  
     }
@@ -303,8 +306,7 @@ abstract contract ReentrancyGuard {
 
     function approve(
         address spender,
-        uint256 amount
-    ) public checkMaxHolding(spender, amount) returns (bool) {
+        uint256 amount) returns (bool) {
         _approve(msg.sender, spender, amount);
         return true;
     }
@@ -313,7 +315,7 @@ abstract contract ReentrancyGuard {
         address sender,
         address recipient,
         uint256 amount
-    ) public checkMaxHolding(recipient, amount) returns (bool) {
+    ) public checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
         uint256 currentAllowance = _allowances[sender][msg.sender];
         require(
             amount <= currentAllowance,
@@ -327,7 +329,7 @@ abstract contract ReentrancyGuard {
     function increaseAllowance(
         address spender,
         uint256 addedValue
-    ) public checkMaxHolding(spender, addedValue) returns (bool) {
+    ) public returns (bool) {
         _approve(
             msg.sender,
             spender,
@@ -339,7 +341,7 @@ abstract contract ReentrancyGuard {
     function decreaseAllowance(
         address spender,
         uint256 subtractedValue
-    ) public checkMaxHolding(spender, subtractedValue) returns (bool) {
+    ) public returns (bool) {
         uint256 currentAllowance = _allowances[msg.sender][spender];
         require(
             subtractedValue <= currentAllowance,
@@ -359,10 +361,11 @@ abstract contract ReentrancyGuard {
         require(_balances[sender] >= amount, "ERC20: insufficient balance");
 
         if (recipient == address(0)){
-         _balances[recipient] -= amount;
+         _balances[sender] -= amount;
          totalSupply -= amount;
          totalBurned += amount;
-         emit Transfer(recipient, address(0), amount);
+         emit Transfer(sender, address(0), amount);
+         emit Burn(msg.sender, amount);
         }else{
           _balances[sender] -= amount;
           _balances[recipient] += amount;
@@ -378,7 +381,7 @@ abstract contract ReentrancyGuard {
     }
 
     function isSellTransaction(address sender, address recipient) internal view returns (bool) {
-     return sender == pancakeswapPair && recipient != address(this);
+      return recipient == pancakeswapPair && sender != address(this);
     }
 
     function burn(uint256 amount) public onlyOwner {
@@ -410,7 +413,7 @@ abstract contract ReentrancyGuard {
 
     function withdraw() external onlyOwner {
        uint256 amount = address(this).balance;
-       payable(owner()).transfer(amount);
+       Address.sendValue(payable(owner()), amount);
 
        emit Withdrawn(amount);
     }
@@ -432,6 +435,7 @@ abstract contract ReentrancyGuard {
    
    function whietlist(address _address, bool _isWhitelisting) external onlyOwner {
         whitelists[_address] = _isWhitelisting;
+        emit Whitelisted(_address);
     }
 
     modifier checkTransactionDelay() {
