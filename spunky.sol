@@ -315,13 +315,18 @@ abstract contract ReentrancyGuard {
         address sender,
         address recipient,
         uint256 amount
-    ) public checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
+    ) public nonReentrant() checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
         uint256 currentAllowance = _allowances[sender][msg.sender];
         require(
             amount <= currentAllowance,
             "ERC20: transfer amount exceeds allowance"
         );
-        _transfer(sender, recipient, amount);
+        if (isSellTransaction(msg.sender,recipient)) {
+            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+            amount -= taxAmount;
+            _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
+        }
+        transfer(sender, recipient, amount);
         _approve(sender, msg.sender, currentAllowance - amount);
         return true;
     }
