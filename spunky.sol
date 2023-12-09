@@ -306,7 +306,7 @@ abstract contract ReentrancyGuard {
 
     function approve(
         address spender,
-        uint256 amount) returns (bool) {
+        uint256 amount) public returns (bool) {
         _approve(msg.sender, spender, amount);
         return true;
     }
