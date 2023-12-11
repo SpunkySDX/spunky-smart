@@ -577,10 +577,10 @@ abstract contract ReentrancyGuard {
         if (isSellTransaction(msg.sender,recipient)) {
             uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
             amount -= taxAmount;
-            safeTransfer(SELL_TAX_ADDRESS, taxAmount);
+            _transfer(sender, SELL_TAX_ADDRESS, taxAmount);
         }
-        safeTransfer(recipient, amount);
-        _approve(sender, msg.sender, currentAllowance - amount);
+        _transfer(sender, recipient, amount);
+        _approve(sender, sender, currentAllowance - amount);
         return true;
     }
 
