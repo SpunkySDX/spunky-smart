@@ -536,7 +536,6 @@ abstract contract ReentrancyGuard {
         uint256 amount
     )
         public
-        nonReentrant
         checkTransactionDelay
         checkMaxHolding(recipient, amount)
         returns (bool)
@@ -568,7 +567,7 @@ abstract contract ReentrancyGuard {
         address sender,
         address recipient,
         uint256 amount
-    ) public nonReentrant() checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
+    ) public checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
         uint256 currentAllowance = _allowances[sender][msg.sender];
         require(
             amount <= currentAllowance,
