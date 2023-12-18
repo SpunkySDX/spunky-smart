@@ -506,6 +506,7 @@ abstract contract ReentrancyGuard {
         _balances[address(this)] = totalSupply;
         //Transfer Team and IEO allocation to the contract owner
         _transfer(address(this), owner(), totalSupply);
+        require(_pancakeswapPair != address(0), "Zero address provided for _pancakeswapPair");
         pancakeswapPair = _pancakeswapPair;
 
         emit Transfer(address(0), address(this), totalSupply);  
@@ -573,7 +574,7 @@ abstract contract ReentrancyGuard {
             amount <= currentAllowance,
             "ERC20: transfer amount exceeds allowance"
         );
-        if (isSellTransaction(msg.sender,recipient)) {
+        if (isSellTransaction(sender,recipient)) {
             uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
             amount -= taxAmount;
             _transfer(sender, SELL_TAX_ADDRESS, taxAmount);
