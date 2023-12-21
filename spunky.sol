@@ -475,6 +475,8 @@ abstract contract ReentrancyGuard {
     address private _vestingContract;
     address private _stakingContract;
 
+     // Mapping to keep track of valid trading pairs
+    mapping(address => bool) public validPairs;
 
     // Token burn details
     uint256 public totalBurned;
@@ -532,23 +534,26 @@ abstract contract ReentrancyGuard {
         return _balances[account];
     }
 
-    function transfer(
-        address recipient,
-        uint256 amount
-    )
-        public
-        checkTransactionDelay
-        checkMaxHolding(recipient, amount)
-        returns (bool)
-    {
-        if (isSellTransaction(msg.sender,recipient)) {
-            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
-            amount -= taxAmount;
-            _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
-        }
-        _transfer(msg.sender, recipient, amount);
-        return true;
+   function transfer(
+    address recipient,
+    uint256 amount
+   )
+    public
+    checkTransactionDelay
+    checkMaxHolding(recipient, amount)
+    returns (bool)
+   {
+    if (isSellTransaction(recipient) && msg.sender != SELL_TAX_ADDRESS) {
+        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+        require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
+        _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
+        amount -= taxAmount;
     }
+    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
+    _transfer(msg.sender, recipient, amount);
+    return true;
+    }
+
 
     function allowance(
         address owner,
@@ -564,25 +569,40 @@ abstract contract ReentrancyGuard {
         return true;
     }
 
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) public checkTransactionDelay checkMaxHolding(recipient, amount) returns (bool) {
-        uint256 currentAllowance = _allowances[sender][msg.sender];
-        require(
-            amount <= currentAllowance,
-            "ERC20: transfer amount exceeds allowance"
-        );
-        if (isSellTransaction(sender,recipient)) {
-            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
-            amount -= taxAmount;
-            _transfer(sender, SELL_TAX_ADDRESS, taxAmount);
-        }
-        _transfer(sender, recipient, amount);
-        _approve(sender, sender, currentAllowance - amount);
-        return true;
+     
+   function transferFrom(
+    address from,
+    address to,
+    uint256 amount
+   ) public checkTransactionDelay checkMaxHolding(to, amount) returns (bool) {
+    uint256 currentAllowance = _allowances[from][msg.sender];
+    require(
+        amount <= currentAllowance || currentAllowance == type(uint256).max,
+        "ERC20: transfer amount exceeds allowance"
+    );
+
+    // Apply sell tax if applicable and ensure sufficient balance
+    if (isSellTransaction(to)) {
+        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+        require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax");
+        _transfer(from, SELL_TAX_ADDRESS, taxAmount);
+        amount -= taxAmount;
     }
+
+    require(_balances[from] >= amount, "ERC20: insufficient balance");
+
+    // Perform the transfer
+    _transfer(from, to, amount);
+
+    // Reduce the spender's allowance, except for unlimited allowances
+    if (currentAllowance != type(uint256).max) {
+        _approve(from, msg.sender, currentAllowance - amount);
+    }
+
+    return true;
+   }
+
+
 
     function increaseAllowance(
         address spender,
@@ -631,6 +651,18 @@ abstract contract ReentrancyGuard {
         }
     }
 
+    // Function to add a trading pair
+    function addTradingPair(address _pair) public onlyOwner {
+        require(_pair != address(0), "Invalid pair address");
+        validPairs[_pair] = true;
+    }
+
+    // Function to remove a trading pair
+    function removeTradingPair(address _pair) public onlyOwner {
+        require(validPairs[_pair], "Pair not exist");
+        validPairs[_pair] = false;
+    }
+
     function _approve(address owner, address spender, uint256 amount) internal {
         require(owner != address(0), "ERC20: approve from the zero address");
         require(spender != address(0), "ERC20: approve to the zero address");
@@ -638,8 +670,14 @@ abstract contract ReentrancyGuard {
         emit Approval(owner, spender, amount);
     }
 
-    function isSellTransaction(address sender, address recipient) internal view returns (bool) {
-      return recipient == pancakeswapPair && sender != address(this);
+    function isSellTransaction(address recipient) internal view returns (bool) {
+        return validPairs[recipient];
+    }
+
+      // Function to update the pancakeswapPair address
+    function updatePancakeswapPair(address _newPancakeswapPair) public onlyOwner {
+        require(_newPancakeswapPair != address(0), "Invalid address");
+        pancakeswapPair = _newPancakeswapPair;
     }
 
     function burn(uint256 amount) public onlyOwner {
