@@ -543,6 +543,8 @@ abstract contract ReentrancyGuard {
     checkMaxHolding(recipient, amount)
     returns (bool)
     {
+    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
+
     if (isSellTransaction(recipient) && msg.sender != SELL_TAX_ADDRESS) {
     uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
 
@@ -551,12 +553,10 @@ abstract contract ReentrancyGuard {
         taxAmount = 1; // Minimum tax of 1e-18 tokens
     }
 
-    require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
     _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
     amount -= taxAmount;
    }
 
-    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
     _transfer(msg.sender, recipient, amount);
     return true;
     }
@@ -577,44 +577,38 @@ abstract contract ReentrancyGuard {
     }
 
      
-   function transferFrom(
+    function transferFrom(
     address from,
     address to,
     uint256 amount
-   ) public checkTransactionDelay checkMaxHolding(to, amount) returns (bool) {
+) public checkTransactionDelay checkMaxHolding(to, amount) returns (bool) {
     uint256 currentAllowance = _allowances[from][msg.sender];
-    require(
-        amount <= currentAllowance || currentAllowance == type(uint256).max,
-        "ERC20: transfer amount exceeds allowance"
-    );
+    require(currentAllowance >= amount, "ERC20: transfer amount exceeds allowance");
 
-    // Apply sell tax if applicable and ensure sufficient balance
-    if (isSellTransaction(to) && msg.sender != SELL_TAX_ADDRESS) {
-     uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
-
-    // Check for truncation to zero and adjust
-     if (taxAmount == 0 && amount > 0) {
-        taxAmount = 1; // Minimum tax of 1e-18 tokens
+    uint256 taxAmount = 0;
+    if (isSellTransaction(to) && from != SELL_TAX_ADDRESS) {
+        taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+        if (taxAmount == 0 && amount > 0) {
+            taxAmount = 1; // Minimum tax of 1e-18 tokens
+        }
     }
 
-     require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
-     _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
-     amount -= taxAmount;
-   }
+    require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax and transfer");
 
+    if (taxAmount > 0) {
+        _transfer(from, SELL_TAX_ADDRESS, taxAmount);
+        amount -= taxAmount;
+    }
 
-    require(_balances[from] >= amount, "ERC20: insufficient balance");
-
-    // Perform the transfer
     _transfer(from, to, amount);
 
-    // Reduce the spender's allowance, except for unlimited allowances
     if (currentAllowance != type(uint256).max) {
         _approve(from, msg.sender, currentAllowance - amount);
     }
 
     return true;
-   }
+}
+
 
 
 
@@ -704,22 +698,22 @@ abstract contract ReentrancyGuard {
         emit Burn(msg.sender, amount);
     }
 
-    function withdrawToken(
-        address tokenAddress,
-        uint256 tokenAmount
-    ) external onlyOwner {
+   function withdrawToken(
+    address tokenAddress,
+    uint256 tokenAmount
+   ) external onlyOwner {
+    IERC20 token = IERC20(tokenAddress);
+    require(
+        token.balanceOf(address(this)) >= tokenAmount,
+        "Not enough tokens in the contract or owner cannot withdraw tokens in contract"
+    );
+    require(
+        tokenAddress != address(this),
+        "Owner cannot withdraw SSDX tokens in contract"
+    );
+    SafeERC20.safeTransfer(token, owner(), tokenAmount);
+   }
 
-        IERC20 token = IERC20(tokenAddress);
-        require(
-            token.balanceOf(address(this)) >= tokenAmount,
-            "Not enough tokens in the contract or owner cannot withdraw tokens in contract"
-        );
-        require(
-            tokenAddress != address(this),
-            "Owner cannot withdraw SSDX tokens in contract"
-        );
-        token.transfer(owner(), tokenAmount);
-    }
 
     function withdraw() external onlyOwner {
        uint256 amount = address(this).balance;
