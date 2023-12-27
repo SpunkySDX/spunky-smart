@@ -542,13 +542,20 @@ abstract contract ReentrancyGuard {
     checkTransactionDelay
     checkMaxHolding(recipient, amount)
     returns (bool)
-   {
+    {
     if (isSellTransaction(recipient) && msg.sender != SELL_TAX_ADDRESS) {
-        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
-        require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
-        _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
-        amount -= taxAmount;
+    uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+
+    // Check for truncation to zero and adjust
+    if (taxAmount == 0 && amount > 0) {
+        taxAmount = 1; // Minimum tax of 1e-18 tokens
     }
+
+    require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
+    _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
+    amount -= taxAmount;
+   }
+
     require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
     _transfer(msg.sender, recipient, amount);
     return true;
@@ -582,12 +589,19 @@ abstract contract ReentrancyGuard {
     );
 
     // Apply sell tax if applicable and ensure sufficient balance
-    if (isSellTransaction(to)) {
-        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
-        require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax");
-        _transfer(from, SELL_TAX_ADDRESS, taxAmount);
-        amount -= taxAmount;
+    if (isSellTransaction(to) && msg.sender != SELL_TAX_ADDRESS) {
+     uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+
+    // Check for truncation to zero and adjust
+     if (taxAmount == 0 && amount > 0) {
+        taxAmount = 1; // Minimum tax of 1e-18 tokens
     }
+
+     require(_balances[msg.sender] >= amount + taxAmount, "ERC20: insufficient balance for tax");
+     _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
+     amount -= taxAmount;
+   }
+
 
     require(_balances[from] >= amount, "ERC20: insufficient balance");
 
