@@ -557,6 +557,7 @@ abstract contract ReentrancyGuard {
     amount -= taxAmount;
    }
 
+    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
     _transfer(msg.sender, recipient, amount);
     return true;
     }
@@ -576,8 +577,7 @@ abstract contract ReentrancyGuard {
         return true;
     }
 
-     
-    function transferFrom(
+   function transferFrom(
     address from,
     address to,
     uint256 amount
@@ -585,31 +585,29 @@ abstract contract ReentrancyGuard {
     uint256 currentAllowance = _allowances[from][msg.sender];
     require(currentAllowance >= amount, "ERC20: transfer amount exceeds allowance");
 
+    // Check if the sender has enough balance for the transfer amount
+    require(_balances[from] >= amount, "ERC20: insufficient balance for transfer");
+
     uint256 taxAmount = 0;
     if (isSellTransaction(to) && from != SELL_TAX_ADDRESS) {
         taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
         if (taxAmount == 0 && amount > 0) {
             taxAmount = 1; // Minimum tax of 1e-18 tokens
         }
-    }
-
-    require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax and transfer");
-
-    if (taxAmount > 0) {
+        require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax and transfer");
         _transfer(from, SELL_TAX_ADDRESS, taxAmount);
-        amount -= taxAmount;
     }
 
-    _transfer(from, to, amount);
+    // Transfer the specified amount to the recipient
+    _transfer(from, to, amount - taxAmount);
 
+    // Reduce the allowance by the initial transfer amount
     if (currentAllowance != type(uint256).max) {
         _approve(from, msg.sender, currentAllowance - amount);
     }
 
     return true;
 }
-
-
 
 
     function increaseAllowance(
