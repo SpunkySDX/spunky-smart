@@ -649,7 +649,7 @@ abstract contract ReentrancyGuard {
          totalSupply -= amount;
          totalBurned += amount;
          emit Transfer(sender, address(0), amount);
-         emit Burn(msg.sender, amount);
+         emit Burn(sender, amount);
         }else{
           _balances[sender] -= amount;
           _balances[recipient] += amount;
