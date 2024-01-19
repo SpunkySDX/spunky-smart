@@ -753,9 +753,7 @@ abstract contract ReentrancyGuard {
     modifier checkMaxHolding(address recipient, uint256 amount) {
 
     if (recipient != address(this) && recipient != owner() && !whitelists[recipient]) {
-        uint256 maxHolding = (totalSupply * MAX_HOLDING_PERCENTAGE) / 100;
-        require(
-            (_balances[recipient] + amount) <= maxHolding,
+        require((_balances[recipient] + amount) <=  MAX_HOLDING_PERCENTAGE,
             "Recipient's token holding exceeds the maximum allowed percentage"
         );
     }
