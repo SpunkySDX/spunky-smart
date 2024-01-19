@@ -594,7 +594,6 @@ abstract contract ReentrancyGuard {
         if (taxAmount == 0 && amount > 0) {
             taxAmount = 1; // Minimum tax of 1e-18 tokens
         }
-        require(_balances[from] >= amount + taxAmount, "ERC20: insufficient balance for tax and transfer");
         _transfer(from, SELL_TAX_ADDRESS, taxAmount);
     }
 
