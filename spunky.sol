@@ -484,7 +484,7 @@ abstract contract ReentrancyGuard {
     uint256 public constant SELL_TAX_PERCENTAGE = 50;
 
     // Antibot features
-    uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
+    uint256 private constant MAX_HOLDING_PERCENTAGE = (500 * (10 ** 9) * (10 ** 18) * 5) / 100;
     uint256 private constant TRANSACTION_DELAY = 1.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
@@ -739,15 +739,16 @@ abstract contract ReentrancyGuard {
         emit Whitelisted(_address);
     }
 
-    modifier checkTransactionDelay() {
+   modifier checkTransactionDelay() {
+    if (!whitelists[msg.sender]) {
         require(
-            _lastTransactionTime[msg.sender] + TRANSACTION_DELAY <=
-                block.timestamp,
-            "Transacation cooldown period has not passed"
+            _lastTransactionTime[msg.sender] + TRANSACTION_DELAY <=block.timestamp,"Transaction cooldown period has not passed"
         );
+
         _lastTransactionTime[msg.sender] = block.timestamp;
-        _;
     }
+    _;
+}
 
     modifier checkMaxHolding(address recipient, uint256 amount) {
 
