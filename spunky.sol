@@ -481,7 +481,7 @@ abstract contract ReentrancyGuard {
     // Token burn details
     uint256 public totalBurned;
 
-    uint256 public constant SELL_TAX_PERCENTAGE = 50;
+    uint256 public constant SELL_TAX_PERCENTAGE = 500;
 
     // Antibot features
     uint256 private constant MAX_HOLDING_PERCENTAGE = (500 * (10 ** 9) * (10 ** 18) * 5) / 100;
