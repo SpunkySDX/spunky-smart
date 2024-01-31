@@ -557,7 +557,6 @@ abstract contract ReentrancyGuard {
     amount -= taxAmount;
    }
 
-    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
     _transfer(msg.sender, recipient, amount);
     return true;
     }
