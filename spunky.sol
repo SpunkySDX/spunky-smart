@@ -1,7 +1,6 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: GPL-3.0
 
-
+pragma solidity >=0.8.0 <0.9.0;
 
 library Address {
     /**
@@ -154,7 +153,6 @@ library Address {
         }
     }
 }
-
 library SafeERC20 {
     using Address for address;
 
@@ -256,9 +254,8 @@ library SafeERC20 {
     }
 }
 
-
 interface IERC20 {
-    /**
+    /**f
      * @dev Emitted when `value` tokens are moved from one account (`from`) to
      * another (`to`).
      *
@@ -287,7 +284,7 @@ interface IERC20 {
      *
      * Returns a boolean value indicating whether the operation succeeded.
      *
-     * Emits a {Transfer} event.    
+     * Emits a {Transfer} event.
      */
     function transfer(address to, uint256 amount) external returns (bool);
 
@@ -338,18 +335,6 @@ abstract contract Context {
     }
 }
 
-/**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * By default, the owner account will be the one that deploys the contract. This
- * can later be changed with {transferOwnership}.
- *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
- */
 abstract contract Ownable is Context {
     address private _owner;
 
@@ -472,492 +457,306 @@ abstract contract ReentrancyGuard {
     }
 }
 
+ contract SpunkySDX is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
 
-contract SpunkyStaking is Ownable, ReentrancyGuard {
-   using SafeERC20 for IERC20;
-
+    // Token details
     string public name;
+    string public symbol;
+    uint8  public _decimals;
+    uint256 public totalSupply;
 
-    // Define the staking plans
-    enum StakingPlan {
-        ThirtyDays,
-        NinetyDays,
-        OneEightyDays,
-        ThreeSixtyDays,
-        Flexible
+    // Token balances
+    mapping(address => uint256) private _balances;
+    mapping(address => mapping(address => uint256)) private _allowances;
+
+    mapping(address => bool) public whitelists;
+
+    address private _vestingContract;
+    address private _stakingContract;
+
+     // Mapping to keep track of valid trading pairs
+    mapping(address => bool) public validPairs;
+
+    // Token burn details
+    uint256 public totalBurned;
+
+    uint256 public constant SELL_TAX_PERCENTAGE = 500;
+
+    // Antibot features
+    uint256 private constant MAX_HOLDING_PERCENTAGE = (500 * (10 ** 9) * (10 ** 18) * 5) / 100;
+    uint256 private constant TRANSACTION_DELAY = 1.5 minutes;
+    mapping(address => uint256) private _lastTransactionTime;
+
+    address public pancakeswapPair; //To be replaced with Pancakeswap Pair Address `
+
+    //Sell Tax Address
+    address public constant SELL_TAX_ADDRESS = 0xF79948ACf0a91bD93513C76651a12291E44D2872;
+
+    //Events
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner,  address indexed spender, uint256 value);
+    event Burn(address indexed account, uint256 amount);
+    event Withdrawn(uint256 amount);
+    event Whitelisted(address indexed);
+
+    constructor(address _pancakeswapPair) {
+        name = "SpunkySDX";
+        symbol = "SSDX";
+        _decimals = 18;
+        totalSupply = 500e9 * 10 ** uint256(_decimals);
+        _balances[address(this)] = totalSupply;
+        //Transfer Team and IEO allocation to the contract owner
+        _transfer(address(this), owner(), totalSupply);
+        require(_pancakeswapPair != address(0), "Zero address provided for _pancakeswapPair");
+        pancakeswapPair = _pancakeswapPair;
+
+        emit Transfer(address(0), address(this), totalSupply);  
     }
 
-    enum RewardCalculationType {
-        Initial,
-        Accrued
+    function getSymbol() public view returns (string memory) {
+        return symbol;
     }
 
-    // Define the returns for each plan
-    mapping(StakingPlan => uint256) private _stakingPlanReturns;
-
-    // Define the duration for each plan
-    mapping(StakingPlan => uint256) private _stakingPlanDurations;
-
-    // Total staked amount
-    uint256 private _totalStakedAmount = 0;
-    uint256 private _rewardBalance;
-
-    // Calculate 5% of the total supply
-    uint256 private constant MAX_HOLDING = (500 * (10 ** 9) * (10 ** 18) * 5) / 100;
-
-    IERC20 public spunkyToken;
-
-    // Staking details
-    struct UserStake {
-        uint256 index;
-        address owner;
-        uint256 amount;
-        uint256 startTime;
-        StakingPlan plan;
-        uint256 reward;
-        uint256 accruedReward;
-        bool isActive;
+    function getName() public view returns (string memory) {
+        return name;
     }
 
-    UserStake[] private _stakingDetails;
-    mapping(address => mapping(StakingPlan => UserStake)) private _userStakes;
-
-    // Events
-    event Stake(address indexed user, uint256 amount, StakingPlan plan);
-    event UpdateStake(address indexed user, uint256 newAmount, StakingPlan plan);
-    event ClaimRewards(address indexed user, uint256 reward);
-    event Unstake(address indexed user, uint256 amount, StakingPlan plan);
-    event EmergencyWithdraw(address indexed user, uint256 amount, StakingPlan plan);
-
-    constructor(address _spunkyTokenAddress) {
-        name = "SpunkySDXStaking";
-        spunkyToken = IERC20(_spunkyTokenAddress); // Initialize the spunkyToken state variable
-    
-        // Define the returns for each staking plan
-        _stakingPlanReturns[StakingPlan.ThirtyDays] = 5;
-        _stakingPlanReturns[StakingPlan.NinetyDays] = 10;
-        _stakingPlanReturns[StakingPlan.OneEightyDays] = 30;
-        _stakingPlanReturns[StakingPlan.ThreeSixtyDays] = 50;
-        _stakingPlanReturns[StakingPlan.Flexible] = 1;
-
-        // Initialize the durations for each staking plan
-        _stakingPlanDurations[StakingPlan.ThirtyDays] = 30;
-        _stakingPlanDurations[StakingPlan.NinetyDays] = 90;
-        _stakingPlanDurations[StakingPlan.OneEightyDays] = 180;
-        _stakingPlanDurations[StakingPlan.ThreeSixtyDays] = 360;
-        _stakingPlanDurations[StakingPlan.Flexible] = 2;
+    function getSupply() public view returns (uint256) {
+        return totalSupply;
     }
 
-function stake(uint256 amount, StakingPlan plan) public nonReentrant {
-    require(amount > 0, "The staking amount must be greater than zero.");
-    UserStake storage userStake = _userStakes[msg.sender][plan];
-    require(userStake.amount == 0, "User already staking; add to your stake or unstake.");
-    require(!userStake.isActive, "Plan is already active");
+    function decimals() public pure returns (uint8) {
+        return 18;
+    }
 
-    // Transfer tokens from the user to this contract and calculate the actual amount received
-    uint256 balanceBefore = IERC20(spunkyToken).balanceOf(address(this));
-    IERC20(spunkyToken).safeTransferFrom(msg.sender, address(this), amount);
-    uint256 balanceAfter = IERC20(spunkyToken).balanceOf(address(this));
-    uint256 actualAmount = balanceAfter - balanceBefore;
+    function balanceOf(address account) public view returns (uint256) {
+        return _balances[account];
+    }
 
-    // Update total staked amount
-    _totalStakedAmount += actualAmount;
+   function transfer(
+    address recipient,
+    uint256 amount
+   )
+    public
+    checkTransactionDelay
+    checkMaxHolding(recipient, amount)
+    returns (bool)
+    {
+    require(_balances[msg.sender] >= amount, "ERC20: insufficient balance");
 
-    // Calculate reward based on actualAmount
-    uint256 reward = calculateStakingReward(actualAmount, plan);
-    
-    require(_rewardBalance >= reward, "Staking rewards exhausted");
+    if (isSellTransaction(recipient) && msg.sender != SELL_TAX_ADDRESS) {
+    uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
 
-    // Update stake details
-    userStake.owner = msg.sender;
-    userStake.amount = actualAmount; // Use actualAmount here
-    userStake.startTime = block.timestamp;
-    userStake.plan = plan;
-    userStake.reward = reward;
-    userStake.accruedReward = 0;
-    userStake.index = _stakingDetails.length;
-    userStake.isActive = true;
+    // Check for truncation to zero and adjust
+    if (taxAmount == 0 && amount > 0) {
+        taxAmount = 1; // Minimum tax of 1e-18 tokens
+    }
 
-    _stakingDetails.push(userStake);
+    _transfer(msg.sender, SELL_TAX_ADDRESS, taxAmount);
+    amount -= taxAmount;
+   }
 
-    emit Stake(msg.sender, actualAmount, plan); // Emit actualAmount
-}
-
-
-function addToStake(uint256 additionalAmount, StakingPlan plan) public nonReentrant {
-    require(additionalAmount > 0, "Invalid additional staking amount");
-
-
-    UserStake storage userStake = _userStakes[msg.sender][plan];
-
-    // Ensure the user has an active stake to add to
-    require(userStake.amount > 0, "No existing stake found.");
-    require(userStake.isActive, "Stake is not active.");
-
-    // Transfer the additional amount to the contract
-    uint256 balanceBefore = spunkyToken.balanceOf(address(this));
-    spunkyToken.safeTransferFrom(msg.sender, address(this), additionalAmount);
-    uint256 balanceAfter = spunkyToken.balanceOf(address(this));
-    uint256 actualAdditionalAmount = balanceAfter - balanceBefore;
-
-    uint256 newStakeAmount = userStake.amount + actualAdditionalAmount;
-
-    uint256 newReward = calculateStakingReward(newStakeAmount, plan);
-    uint256 newAccruedReward = calculateAccruedReward(userStake.amount, plan);
-
-    // Check if the new reward exceeds the available _rewardBalance
-    require(_rewardBalance >= newReward + newAccruedReward, "Insufficient reward balance for the new stake amount.");
-
-    userStake.reward = newReward;
-    userStake.accruedReward += newAccruedReward;
-    userStake.amount = newStakeAmount;
-    userStake.startTime = block.timestamp;
-
-    // Update the _stakingDetails array
-    UserStake storage detail = _stakingDetails[userStake.index];
-    detail.amount = newStakeAmount;
-    detail.reward = newReward;
-    detail.accruedReward += newAccruedReward;
-    detail.startTime = block.timestamp;
-
-    // Update the total staked amount and _rewardBalance
-    _totalStakedAmount += actualAdditionalAmount;
-
-    require (newStakeAmount <= MAX_HOLDING, "You cannot hold above the maximum amount");
-
-    emit UpdateStake(msg.sender, newStakeAmount, plan);
-}
-
-
-    // Add a function to allow the owner to fund the reward balance
-    function fundRewards(uint256 amount) public onlyOwner nonReentrant {
-    uint256 balanceBefore = IERC20(spunkyToken).balanceOf(address(this));
-    IERC20(spunkyToken).transferFrom(msg.sender, address(this), amount);
-    uint256 balanceAfter = IERC20(spunkyToken).balanceOf(address(this));
-    uint256 actualReceivedAmount = balanceAfter - balanceBefore;
-
-    // Handle deflationary token's transaction fee
-    require(actualReceivedAmount > 0, "Received amount is zero");
-
-    _rewardBalance += actualReceivedAmount;
+    _transfer(msg.sender, recipient, amount);
+    return true;
     }
 
 
-function claimReward(StakingPlan plan) internal returns (uint256) {
-    UserStake memory userStake = _userStakes[msg.sender][plan];
-    require(userStake.amount > 0, "No staking balance available");
-
-    uint256 reward = userStake.reward + userStake.accruedReward;
-
-    if (plan == StakingPlan.Flexible) {
-        uint256 addedReward = calculateAccruedReward(userStake.amount, plan);
-        reward += addedReward;
-
-        // Adjust reward if it exceeds the available _rewardBalance
-        if (_rewardBalance < reward){
-            reward = _rewardBalance;
-        }
-    }
-
-    uint256 totalBalance = userStake.amount + reward;
-    if (totalBalance > MAX_HOLDING) {
-        reward = MAX_HOLDING - userStake.amount;
-    }
-
-    require(_rewardBalance >= reward, "Insufficient reward balance");
-    _rewardBalance -= reward;
-
-    return reward;
-}
-
-
-  function userClaimReward(StakingPlan plan) public nonReentrant {
-    // Retrieve the user's stake details from storage
-    UserStake storage userStake = _userStakes[msg.sender][plan];
-
-    // Calculate the duration condition for reward claiming
-    bool isAfterPlanDuration = block.timestamp >=
-        userStake.startTime + _stakingPlanDurations[plan] * 1 days;
-
-    // Ensure the user is allowed to claim the reward
-    require(
-        isAfterPlanDuration,
-        "Cannot claim rewards before the staking duration expires"
-    );
-
-    // Retrieve the total reward for the user
-    uint256 reward = claimReward(plan);
-
-    // Transfer the reward to the user
-    IERC20(spunkyToken).safeTransfer(msg.sender, reward);
-
-    // Reset the accrued reward and startTime for the user
-    userStake.accruedReward = 0;
-    userStake.startTime = block.timestamp;
-
-    // Update the stakingDetails array to reflect the new accruedReward and startTime
-    _stakingDetails[userStake.index].accruedReward = 0;
-    _stakingDetails[userStake.index].startTime = block.timestamp;
-
-    // Emit a ClaimRewards event
-    emit ClaimRewards(msg.sender, reward);
-}
-
-
-    function removeStakeFromArray(StakingPlan plan) internal {
-        // Retrieve the stake details for the user
-        UserStake storage userStake = _userStakes[msg.sender][plan];
-
-        // Ensure the user has an active stake for this plan
-        require(userStake.isActive, "You don't have a stake for this plan");
-
-        // Get the last index in the staking details array
-        uint256 lastIndex = _stakingDetails.length - 1;
-
-        // If the stake to be removed is not the last one, swap it with the last one
-        if (userStake.index != lastIndex) {
-            UserStake memory swappedStake = _stakingDetails[lastIndex];
-
-            // Perform the swap
-            _stakingDetails[userStake.index] = swappedStake;
-
-            // Update the index for the stake that was moved
-            _userStakes[swappedStake.owner][swappedStake.plan].index = userStake
-                .index;
-        }
-
-        // Remove the last element (which is now the element to be removed)
-        _stakingDetails.pop();
-
-        // Delete the user's stake information
-        delete _userStakes[msg.sender][plan];
-    }
-
-   function unstake(StakingPlan plan) public nonReentrant {
-    require(msg.sender == owner(), "You own no rights to unstake this stake");
-    UserStake storage userStake = _userStakes[msg.sender][plan];
-    require(userStake.amount > 0, "No staking balance available");
-
-    // Check if the staking period has ended
-    if (plan == StakingPlan.Flexible) {
-        // For the flexible plan, require at least 48 hours before unstaking
-        require(block.timestamp >= userStake.startTime + 2 days, "Minimum staking period for flexible plan has not ended");
-    } else {
-        require(block.timestamp >= userStake.startTime + _stakingPlanDurations[plan] * 1 days, "Staking period has not ended");
-    }
-
-    bool isAfterPlanDuration = block.timestamp >=
-        userStake.startTime + _stakingPlanDurations[plan] * 1 days;
-
-    uint256 reward = claimReward(plan);
-
-    if (!isAfterPlanDuration) {
-        // If the unstaking is done before the plan duration, the reward is forfeited
-        reward = 0;
-    }
-
-    uint256 totalAmount = userStake.amount + reward;
-
-    // Transfer the unstaked amount and reward back to the user
-        IERC20(spunkyToken).safeTransfer(msg.sender, totalAmount);
-
-    // Update the total staked amount
-    _totalStakedAmount -= userStake.amount;
-
-    // Emit an Unstake event
-    emit Unstake(msg.sender, userStake.amount, plan);
-
-    // Remove the user's stake details
-    removeStakeFromArray(plan);
-}
-
-    function getCanClaimStakingReward(
-        StakingPlan plan
-    ) external view returns (bool) {
-        uint256 stakingStartTime = _userStakes[msg.sender][plan].startTime;
-        bool isAfterPlanDuration = block.timestamp >=
-            stakingStartTime + _stakingPlanDurations[plan] * 1 days;
-        return isAfterPlanDuration;
-    }
-
-    function getIsStakingActive(StakingPlan plan) public view returns (bool) {
-        return _userStakes[msg.sender][plan].isActive;
-    }
-
-    function getStakingDetailsCount() public view returns (uint256) {
-        return _stakingDetails.length;
-    }
-
-    function getTotalStakedAmount() public view returns (uint256) {
-        return _totalStakedAmount;
-    }
-
-    function getStakingBalance(
-        StakingPlan plan
+    function allowance(
+        address owner,
+        address spender
     ) public view returns (uint256) {
-        return _userStakes[msg.sender][plan].amount;
+        return _allowances[owner][spender];
     }
 
-    function getStakingReward(
-        StakingPlan plan
-    ) public view returns (uint256) {
-        // Fetch the user's stake details
-        UserStake memory userStake = _userStakes[msg.sender][plan];
+    function approve(
+        address spender,
+        uint256 amount) public returns (bool) {
+        _approve(msg.sender, spender, amount);
+        return true;
+    }
 
-        // If the plan is not active for the user, return zero
-        if (!userStake.isActive) {
-            return 0;
+   function transferFrom(
+    address from,
+    address to,
+    uint256 amount
+) public checkTransactionDelay checkMaxHolding(to, amount) returns (bool) {
+    uint256 currentAllowance = _allowances[from][msg.sender];
+    require(currentAllowance > amount, "ERC20: transfer amount exceeds allowance");
+
+    // Check if the sender has enough balance for the transfer amount
+    require(_balances[from] >= amount, "ERC20: insufficient balance for transfer");
+
+    uint256 taxAmount = 0;
+    if (isSellTransaction(to) && from != SELL_TAX_ADDRESS) {
+        taxAmount = (amount * SELL_TAX_PERCENTAGE) / 10000;
+        if (taxAmount == 0 && amount > 0) {
+            taxAmount = 1; // Minimum tax of 1e-18 tokens
         }
+        _transfer(from, SELL_TAX_ADDRESS, taxAmount);
+    }
 
-         // If the allocation balance is zero, return zero
-        if (IERC20(spunkyToken).balanceOf(address(this))  == 0) {
-            return 0;
+    // Transfer the specified amount to the recipient
+    _transfer(from, to, amount - taxAmount);
+
+    // Reduce the allowance by the initial transfer amount
+    if (currentAllowance != type(uint256).max) {
+        _approve(from, msg.sender, currentAllowance - amount);
+    }
+
+    return true;
+}
+
+
+    function increaseAllowance(
+        address spender,
+        uint256 addedValue
+    ) public returns (bool) {
+        _approve(
+            msg.sender,
+            spender,
+            _allowances[msg.sender][spender] + addedValue
+        );
+        return true;
+    }
+
+    function decreaseAllowance(
+        address spender,
+        uint256 subtractedValue
+    ) public returns (bool) {
+        uint256 currentAllowance = _allowances[msg.sender][spender];
+        require(
+            subtractedValue <= currentAllowance,
+            "ERC20: decreased allowance below zero"
+        );
+        _approve(msg.sender, spender, currentAllowance - subtractedValue);
+        return true;
+    }
+
+    function _transfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) internal {
+        require(sender != address(0), "ERC20: transfer from the zero address");
+        require(amount > 0, "ERC20: transfer amount must be greater than zero");
+        require(_balances[sender] >= amount, "ERC20: insufficient balance");
+
+        if (recipient == address(0)){
+         _balances[sender] -= amount;
+         totalSupply -= amount;
+         totalBurned += amount;
+         emit Transfer(sender, address(0), amount);
+         emit Burn(sender, amount);
+        }else{
+          _balances[sender] -= amount;
+          _balances[recipient] += amount;
+          emit Transfer(sender, recipient, amount);
         }
-
-        // Otherwise, calculate the total reward
-        uint256 additional = calculateAccruedReward(userStake.amount, plan);
-        return userStake.accruedReward + additional;
     }
 
-    function getAllStakingBalances(
-        address user
-    ) public view returns (uint256[] memory) {
-        uint256[] memory balances = new uint256[](5); // Assuming 5 plans
-        balances[0] = _userStakes[user][StakingPlan.ThirtyDays].amount;
-        balances[1] = _userStakes[user][StakingPlan.NinetyDays].amount;
-        balances[2] = _userStakes[user][StakingPlan.OneEightyDays].amount;
-        balances[3] = _userStakes[user][StakingPlan.ThreeSixtyDays].amount;
-        balances[4] = _userStakes[user][StakingPlan.Flexible].amount;
-        return balances;
+    // Function to add a trading pair
+    function addTradingPair(address _pair) public onlyOwner {
+        require(_pair != address(0), "Invalid pair address");
+        validPairs[_pair] = true;
     }
 
-    function getStakingDetailsPage(
-    uint256 start,
-    uint256 end
-) public view returns (UserStake[] memory) {
-    // Validate the indices
+    // Function to remove a trading pair
+    function removeTradingPair(address _pair) public onlyOwner {
+        require(validPairs[_pair], "Pair not exist");
+        validPairs[_pair] = false;
+    }
+
+    function _approve(address owner, address spender, uint256 amount) internal {
+        require(owner != address(0), "ERC20: approve from the zero address");
+        require(spender != address(0), "ERC20: approve to the zero address");
+        _allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+
+    function isSellTransaction(address recipient) internal view returns (bool) {
+        return validPairs[recipient];
+    }
+
+      // Function to update the pancakeswapPair address
+    function updatePancakeswapPair(address _newPancakeswapPair) public onlyOwner {
+        require(_newPancakeswapPair != address(0), "Invalid address");
+        pancakeswapPair = _newPancakeswapPair;
+    }
+
+    function burn(uint256 amount) public onlyOwner {
+
+        require(amount <= _balances[msg.sender], "Not enough tokens to burn");
+        _balances[msg.sender] -= amount;
+        totalSupply -= amount;
+        totalBurned += amount;
+        emit Transfer(msg.sender, address(0), amount);
+        emit Burn(msg.sender, amount);
+    }
+
+   function withdrawToken(
+    address tokenAddress,
+    uint256 tokenAmount
+   ) external onlyOwner {
+    IERC20 token = IERC20(tokenAddress);
     require(
-        start <= end && end < _stakingDetails.length,
-        "Invalid indices"
+        token.balanceOf(address(this)) >= tokenAmount,
+        "Not enough tokens in the contract or owner cannot withdraw tokens in contract"
     );
-
-    // Limit the number of iterations to 100
     require(
-        end - start <= 100,
-        "Too many iterations"
+        tokenAddress != address(this),
+        "Owner cannot withdraw SSDX tokens in contract"
     );
+    SafeERC20.safeTransfer(token, owner(), tokenAmount);
+   }
 
-    // Create a new array to hold the range of UserStakes
-    UserStake[] memory page = new UserStake[](end - start + 1);
 
-    // Loop through the _stakingDetails array and populate the 'page' array
-    for (uint256 i = start; i <= end; i++) {
-        page[i - start] = _stakingDetails[i];
+    function withdraw() external onlyOwner {
+       uint256 amount = address(this).balance;
+       Address.sendValue(payable(owner()), amount);
+
+       emit Withdrawn(amount);
     }
 
-    // Return the 'page' array
-    return page;
+    function renounceOwnership() public override onlyOwner {
+        super.renounceOwnership();
+    }
+
+   function transferOwnership(address newOwner) public override onlyOwner {
+    require(newOwner != address(0), "Ownable: new owner is the zero address");
+    // Transfer the balance of the current owner to the new owner
+    uint256 balanceOfCurrentOwner = _balances[owner()];
+    _balances[owner()] = 0;
+    _balances[newOwner] += balanceOfCurrentOwner;
+    emit Transfer(owner(), newOwner, balanceOfCurrentOwner);
+    // Transfer the ownership
+    super.transferOwnership(newOwner);
+   }  
+   
+   function whietlist(address _address, bool _isWhitelisting) external onlyOwner {
+        whitelists[_address] = _isWhitelisting;
+        emit Whitelisted(_address);
+    }
+
+   modifier checkTransactionDelay() {
+    if (!whitelists[msg.sender]) {
+        require(
+            _lastTransactionTime[msg.sender] + TRANSACTION_DELAY <=block.timestamp,"Transaction cooldown period has not passed"
+        );
+
+        _lastTransactionTime[msg.sender] = block.timestamp;
+    }
+    _;
 }
 
-    function calculateStakingReward(
-    uint256 amount,
-    StakingPlan plan
-    )internal view returns (uint256) {
-    require(amount > 0, "Invalid staking amount");
-    uint256 rewardPercentage = _stakingPlanReturns[plan];
-    uint256 daysRequired = _stakingPlanDurations[plan];
+    modifier checkMaxHolding(address recipient, uint256 amount) {
 
-    if (plan == StakingPlan.Flexible) {
-        return 0;
-    } else {
-        return (amount * rewardPercentage * daysRequired) / (1000 * 365);
+    if (recipient != address(this) && recipient != owner() && !whitelists[recipient]) {
+        require((_balances[recipient] + amount) <=  MAX_HOLDING_PERCENTAGE,
+            "Recipient's token holding exceeds the maximum allowed percentage"
+        );
     }
-    }
+    _;
+  }
 
-
-    function calculateAccruedReward(
-    uint256 amount,
-    StakingPlan plan
-) internal view returns (uint256) {
-    require(amount > 0, "Invalid staking amount");
-    uint256 startTime = _userStakes[msg.sender][plan].startTime;
-    uint256 rewardPercentage = _stakingPlanReturns[plan];
-    uint256 elapseTime = block.timestamp - startTime;
-    uint256 durationInSeconds = _stakingPlanDurations[plan] * 1 days;
-    uint256 secondsInAYear = 365 * 1 days;
-
-    if (elapseTime > durationInSeconds && plan != StakingPlan.Flexible) {
-        elapseTime = durationInSeconds;
-    }
-
-    if (plan == StakingPlan.Flexible) {
-        // Adjusting the reward calculation for the Flexible plan to 0.1% APY
-        return (amount * elapseTime) / (1000 * secondsInAYear);
-    } else {
-        // For other plans, the formula remains the same:
-        return (amount * rewardPercentage * elapseTime) / (1000 * secondsInAYear);
-    }
-}
-
-    function calculateReward (
-        uint256 amount,
-        StakingPlan plan,
-        RewardCalculationType calculationType,
-        uint256 startTime //Used primarily for reward calculation
-    ) internal view returns (uint256) {
-        uint256 rewardPercentage = _stakingPlanReturns[plan];
-        uint256 durationInSeconds = _stakingPlanDurations[plan] * 1 days;
-        uint256 secondsInAYear = 365 * 1 days;
-        
-        if (calculationType == RewardCalculationType.Initial) {
-            // For initial reward calculation
-            if (plan == StakingPlan.Flexible) {
-                return 0; // Flexible plan might have different handling
-            } else {
-                require(amount > 0, "Invalid staking amount");
-                return (amount * rewardPercentage * durationInSeconds) / (1000 * secondsInAYear);
-            }
-        } else {
-            // For accrued reward calculation
-            require(amount > 0, "Invalid staking amount");
-            uint256 elapseTime = block.timestamp - startTime;
-            if (elapseTime > durationInSeconds && plan != StakingPlan.Flexible) {
-                elapseTime = durationInSeconds;
-            }
-            if (plan == StakingPlan.Flexible) {
-                // Adjusting the reward calculation for the Flexible plan
-                return (amount * elapseTime) / (1000 * secondsInAYear);
-            } else {
-                return (amount * rewardPercentage * elapseTime) / (1000 * secondsInAYear);
-            }
-        }
-
-    }
-
-function emergencyWithdraw(StakingPlan plan) public nonReentrant {
-    require(msg.sender == owner(), "Only owner can call an emergency withdrawal");
-    UserStake storage userStake = _userStakes[msg.sender][plan];
-    require(userStake.amount > 0, "No staking balance available");
-
-    // Ensure that emergency withdrawal is done before the plan ends
-    bool isBeforePlanEnds = block.timestamp < userStake.startTime + _stakingPlanDurations[plan] * 1 days;
-    require(isBeforePlanEnds, "Emergency withdrawal is allowed only before the plan ends");
-
-    uint256 totalAmount = userStake.amount;
-
-    // Transfer the unstaked amount back to the user
-    IERC20(spunkyToken).safeTransfer(msg.sender, totalAmount);
-
-    // Update the total staked amount
-    _totalStakedAmount -= userStake.amount;
-    
-    // Emit an EmergencyWithdraw event
-    emit EmergencyWithdraw(msg.sender, totalAmount, plan);
-
-    // Remove the user's stake details
-    delete _userStakes[msg.sender][plan];
-}
-
-
-    
 }
