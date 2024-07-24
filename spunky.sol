@@ -4,14 +4,16 @@ pragma solidity >=0.8.0 <0.9.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract SpunkySDX is Ownable, ReentrancyGuard {
     // Token details
-    string public name;
-    string public symbol;
-    uint8 public decimals;
+    string  public name;
+    string  public symbol;
+    uint8   public _decimals;
     uint256 public totalSupply;
+
+    IERC20 public usdtToken;
 
     // Token balances
     mapping(address => uint256) private _balances;
@@ -25,9 +27,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
    
     // Token allowances
     mapping(address => mapping(address => uint256)) private _allowances;
-
-    //Coinbase price feed
-    AggregatorV3Interface internal priceFeed;
 
     // Staking details
     mapping(address => uint256) private _stakingBalances;
@@ -91,16 +90,13 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
    constructor() {
         name = "SpunkySDX";
         symbol = "SSDX";
-        decimals = 18;
-        totalSupply = 500e9 * 10**uint256(decimals);
+        _decimals = 18;
+        totalSupply = 500e9 * 10**uint256(_decimals);
 
         // Initially assign all tokens to the contract itself
         _balances[address(this)] = totalSupply;
 
-        address priceFeedAddress = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
-        priceFeed = AggregatorV3Interface(priceFeedAddress);
-        uint256 ethPriceInUSD = getLatestEthPrice(); // Get ETH price in USD
-        presalePrice = ethPriceInUSD / 2e6; // 1 ETH buys this many tokens (presale)
+        usdtToken = IERC20(0x7169D38820dfd117C3FA1f22a697dBA58d90BA06); // USDT contract address on Ethereum
 
         // Token distribution details based on total supply
         WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
@@ -142,6 +138,23 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         emit Transfer(address(this), address(this), TEAM_ALLOCATION);
         emit Transfer(address(this), address(this), STAKING_ALLOCATION);
     }
+
+    function getSymbol() public view returns (string memory) {
+      return symbol;
+    }
+
+    function getName() public view returns (string memory) {
+       return name;
+    }
+
+    function getTotalSupply() public view returns (uint256) {
+        return totalSupply;
+    }
+
+    function decimals() public pure returns (uint8) {
+        return 18;
+    }
+
 
     function balanceOf(address account) public view returns (uint256) {
         return _balances[account];
@@ -219,33 +232,34 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
        }
     }
     
-    function redeemAirdrop() nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, AIRDROP_ALLOCATION) checkIsAirDropReedemable() {
+    function redeemAirdrop(uint256 amount) nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, amount) checkIsAirDropReedemable() {
         require(!_airdropRedeemed[msg.sender], "Airdrop already redeemed");
-        require(AIRDROP_ALLOCATION > 0, "Invalid amount");
-        require(_allocationBalances[address(this)][4] >= AIRDROP_ALLOCATION, "No airdrop balance available");
+        require(amount > 0 && amount<= 1000, "Invalid amount");
+        require(_allocationBalances[address(this)][4] >= amount, "No airdrop balance available");
 
         _airdropRedeemed[msg.sender] = true; 
-        _allocationBalances[address(this)][4] -= AIRDROP_ALLOCATION;
-        _transfer(address(this), msg.sender, AIRDROP_ALLOCATION);
+        _allocationBalances[address(this)][4] -= amount;
+        _transfer(address(this), msg.sender, amount);
     }
 
+
     function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant checkTransactionDelay() onlyOwner() public {
-    require(account != address(0), "Invalid account");
-    require(amount > 0, "Invalid amount");
-    require(cliffDuration < vestingDuration, "Cliff duration must be less than vesting duration");
-    require(_balances[owner()] >= amount, "Owner does not have enough balance"); 
+        require(account != address(0), "Invalid account");
+        require(amount > 0, "Invalid amount");
+        require(cliffDuration < vestingDuration, "Cliff duration must be less than vesting duration");
+        require(_balances[owner()] >= amount, "Owner does not have enough balance"); 
 
-    _vestingDetails[account] = VestingDetail({
-        amount: amount,
-        startTime: block.timestamp,
-        cliffDuration: cliffDuration,
-        vestingDuration: vestingDuration,
-        releasedAmount: 0
-    });
+        _vestingDetails[account] = VestingDetail({
+            amount: amount,
+            startTime: block.timestamp,
+            cliffDuration: cliffDuration,
+            vestingDuration: vestingDuration,
+            releasedAmount: 0
+        });
 
-    _transfer(owner(), account, amount);
+        _transfer(owner(), account, amount);
 
-    emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
+        emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
    }
 
    function releaseVestedTokens(address account) nonReentrant external onlyOwner() {
@@ -328,13 +342,6 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return recipient == address(this);
     }
 
-    function handleSellTax(uint256 amount) internal returns (uint256) {
-        uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 100;
-        _balances[msg.sender] -= taxAmount;
-        _balances[owner()] += taxAmount;
-        return amount - taxAmount;
-    }
-
    function burn(uint256 amount) public  onlyOwner() {
         require(totalBurned + amount <= MAX_BURN, "Total burned exceeds max burn amount");
         require(amount <= _balances[msg.sender], "Not enough tokens to burn");
@@ -355,10 +362,12 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return _stakingBalances[staker];
     }
 
-    function buyTokens() nonReentrant public checkMaxHolding(msg.sender, msg.value) checkTransactionDelay() payable {
+    function buyTokens(uint256 usdtAmount) public checkMaxHolding(msg.sender, usdtAmount) {
         require(isPresale, "Presale has ended");
         require(msg.sender != owner(), "Owner cannot participate in presale");
-        uint256 tokensToBuy = msg.value * presalePrice;
+        require(usdtToken.balanceOf(msg.sender) >= usdtAmount, "Insufficient USDT balance");
+
+        uint256 tokensToBuy = usdtAmount * presalePrice;
 
         // Check if the presale allocation is sufficient
         require(_allocationBalances[address(this)][2] >= tokensToBuy, "Not enough presale tokens available");
@@ -377,22 +386,17 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         uint256 cliffDuration = 0; // No cliff for presale
         uint256 vestingDuration = 30 days * 5; // 5 months
         addVestingSchedule(msg.sender, vestedAmount, cliffDuration, vestingDuration);
+
+        // Transfer USDT from the buyer to the contract
+        usdtToken.transferFrom(msg.sender, address(this), usdtAmount);
     }
 
-     receive() external payable {
-      if (isPresale) {
-        // If presale is on, call the buyTokens function
-        buyTokens();
-        } else {
-        // If presale is off, refund the Ether to the sender
-        payable(msg.sender).transfer(msg.value);
-       }
-     }
+    function withdrawToken(address tokenAddress, uint256 tokenAmount) external onlyOwner {
+     require(isPresale == false, "Presale has ended");
 
-    function getLatestEthPrice() public view returns (uint256) {
-      (, int price,,,) = priceFeed.latestRoundData();
-      require(price >= 0, "Price is negative");
-      return uint256(price); // Convert the price to uint256
+     IERC20 token = IERC20(tokenAddress);
+     require(token.balanceOf(address(this)) >= tokenAmount, "Not enough tokens in the contract");
+     token.transfer(owner(), tokenAmount);
     }
 
 
