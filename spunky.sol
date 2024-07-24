@@ -47,7 +47,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     }
 
     // Fixed price for buying tokens during the presale (in wei per token)
-    uint256 public presalePrice = 0.000001;
+    uint256 public presalePrice = 1;
    
     // State to determine if the contract is in presale or launch state
     bool public isPresale = true;
@@ -184,7 +184,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return true;
     }
 
-    function transferFrom(address sender, address recipient, uint256 amount) public checkTransactionDelay() checkMaxHolding(recipient, amount) returns (bool) {
+    function transferFrom(address sender, address recipient, uint256 amount) public checkMaxHolding(recipient, amount) returns (bool) {
         uint256 currentAllowance = _allowances[sender][msg.sender];
         require(amount <= currentAllowance, "ERC20: transfer amount exceeds allowance");
 
@@ -232,7 +232,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
        }
     }
     
-    function redeemAirdrop(uint256 amount) nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, amount) checkIsAirDropReedemable() {
+    function redeemAirdrop(uint256 amount) nonReentrant external checkMaxHolding(msg.sender, amount) checkIsAirDropReedemable() {
         require(!_airdropRedeemed[msg.sender], "Airdrop already redeemed");
         require(amount > 0 && amount<= 1000, "Invalid amount");
         require(_allocationBalances[address(this)][4] >= amount, "No airdrop balance available");
@@ -243,7 +243,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     }
 
 
-    function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant checkTransactionDelay() public {
+    function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant public {
         require(account != address(0), "Invalid account");
         require(amount > 0, "Invalid amount");
         require(cliffDuration < vestingDuration, "Cliff duration must be less than vesting duration");
@@ -262,7 +262,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
    }
 
-   function releaseVestedTokens(address account) nonReentrant checkTransactionDelay() public {
+   function releaseVestedTokens(address account) nonReentrant public  {
     require(account != address(0), "Invalid account");
     VestingDetail storage vesting = _vestingDetails[account];
     require(vesting.amount > 0, "No vesting available");
@@ -289,7 +289,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return (amount * rewardPercentage) / 1000;
     }
 
-   function stake(uint256 amount, StakingPlan plan) nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
+   function stake(uint256 amount, StakingPlan plan) nonReentrant external checkMaxHolding(msg.sender, amount) {
         require(amount > 0, "Invalid staking amount");
         require(_stakingBalances[msg.sender] == 0, "This address already has an active stake");
 
@@ -308,7 +308,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         emit Stake(msg.sender, amount);
    }
 
-   function unstake(uint256 amount) nonReentrant external checkTransactionDelay() {
+   function unstake(uint256 amount) nonReentrant external {
     require(amount > 0, "Invalid unstaking amount");
     require(_stakingBalances[msg.sender] >= amount, "No staking balance available");
 
@@ -323,7 +323,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
    }
 
 
-   function claimStakingRewards() nonReentrant public checkTransactionDelay() {
+   function claimStakingRewards() nonReentrant public {
     require(block.timestamp >= _stakingStartTimes[msg.sender] + _stakingPlanDurations[_stakingPlans[msg.sender]] * 1 days, "Staking period has not ended");
     require(_stakingBalances[msg.sender] > 0, "No staking balance available");
 
@@ -362,9 +362,9 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return _stakingBalances[staker];
     }
 
-    function buyTokens(uint256 usdtAmount) public checkMaxHolding(msg.sender, usdtAmount) checkTransactionDelay() {
+    function buyTokens(uint256 usdtAmount) public checkMaxHolding(msg.sender, usdtAmount) {
         require(isPresale, "Presale has ended");
-        require(msg.sender != owner(), "Owner cannot participate in presale");
+        
         require(usdtToken.balanceOf(msg.sender) >= usdtAmount, "Insufficient USDT balance");
 
         uint256 tokensToBuy = usdtAmount * presalePrice;
