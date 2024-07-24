@@ -262,7 +262,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
    }
 
-   function releaseVestedTokens(address account) nonReentrant external () {
+   function releaseVestedTokens(address account) nonReentrant checkTransactionDelay() public {
     require(account != address(0), "Invalid account");
     VestingDetail storage vesting = _vestingDetails[account];
     require(vesting.amount > 0, "No vesting available");
@@ -362,7 +362,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         return _stakingBalances[staker];
     }
 
-    function buyTokens(uint256 usdtAmount) public checkMaxHolding(msg.sender, usdtAmount) {
+    function buyTokens(uint256 usdtAmount) public checkMaxHolding(msg.sender, usdtAmount) checkTransactionDelay() {
         require(isPresale, "Presale has ended");
         require(msg.sender != owner(), "Owner cannot participate in presale");
         require(usdtToken.balanceOf(msg.sender) >= usdtAmount, "Insufficient USDT balance");
