@@ -262,7 +262,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
    }
 
-   function releaseVestedTokens(address account) nonReentrant external onlyOwner() {
+   function releaseVestedTokens(address account) nonReentrant external () {
     require(account != address(0), "Invalid account");
     VestingDetail storage vesting = _vestingDetails[account];
     require(vesting.amount > 0, "No vesting available");
