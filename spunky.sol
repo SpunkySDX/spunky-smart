@@ -243,7 +243,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     }
 
 
-    function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant checkTransactionDelay() onlyOwner() public {
+    function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant checkTransactionDelay() public {
         require(account != address(0), "Invalid account");
         require(amount > 0, "Invalid amount");
         require(cliffDuration < vestingDuration, "Cliff duration must be less than vesting duration");
