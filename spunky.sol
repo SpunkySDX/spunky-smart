@@ -379,6 +379,9 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         // Update the presale allocation
         _allocationBalances[address(this)][2] -= tokensToBuy;
 
+        // Transfer USDT from the buyer to the contract
+        usdtToken.transferFrom(msg.sender, address(this), usdtAmount);
+
         // Transfer the immediate release portion
         _transfer(address(this), msg.sender, immediateRelease);
 
@@ -387,8 +390,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
         uint256 vestingDuration = 30 days * 5; // 5 months
         addVestingSchedule(msg.sender, vestedAmount, cliffDuration, vestingDuration);
 
-        // Transfer USDT from the buyer to the contract
-        usdtToken.transferFrom(msg.sender, address(this), usdtAmount);
+    
     }
 
     function withdrawToken(address tokenAddress, uint256 tokenAmount) external onlyOwner {
