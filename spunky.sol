@@ -3,8 +3,10 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
-contract SpunkySDX is Ownable {
+contract SpunkySDX is Ownable, ReentrancyGuard {
     // Token details
     string public name;
     string public symbol;
@@ -24,24 +26,32 @@ contract SpunkySDX is Ownable {
     // Token allowances
     mapping(address => mapping(address => uint256)) private _allowances;
 
-    // Vesting details
-    uint256 private constant VESTING_PERIOD = 5;
-    uint256 private constant RELEASE_INTERVAL = 30 days;
-    mapping(address => uint256) private _vestingStart;
-    mapping(address => uint256) private _vestingReleased;
+    //Coinbase price feed
+    AggregatorV3Interface internal priceFeed;
 
     // Staking details
-    uint256 private constant STAKING_APY = 5;
     mapping(address => uint256) private _stakingBalances;
     mapping(address => uint256) private _stakingRewards;
     mapping(StakingPlan => uint256) private _stakingPlanDurations;
+    mapping(address => uint256) private _stakingStartTimes;
+    mapping(address => StakingPlan) private _stakingPlans;
 
     // Vesting details
-    mapping(address => uint256) private _vestingSchedules;
-    mapping(address => uint256) private _vestingStarts;
-    mapping(address => uint256) private _vestingCliffs;
-    mapping(address => uint256) private _vestingEnds;
-    mapping(address => uint256) private _releasedAmounts;
+    mapping(address => VestingDetail) private _vestingDetails;
+
+    struct VestingDetail {
+        uint256 amount;
+        uint256 startTime;
+        uint256 cliffDuration;
+        uint256 vestingDuration;
+        uint256 releasedAmount;
+    }
+
+    // Fixed price for buying tokens during the presale (in wei per token)
+    uint256 public presalePrice = 1;
+   
+    // State to determine if the contract is in presale or launch state
+    bool public isPresale = true;
 
     // Token distribution details
     uint256 private WHITELIST_ALLOCATION = 0; 
@@ -58,13 +68,14 @@ contract SpunkySDX is Ownable {
     uint256 public totalBurned;
     uint256 public MAX_BURN = 0; 
 
-    // Slippage tolerance
-    uint256 private constant MAX_SLIPPAGE_TOLERANCE = 5;
+    // Slippage tolerance, Airdrop
     uint256 public constant SELL_TAX_PERCENTAGE = 5;
+    mapping(address => bool) private _airdropRedeemed;
+    mapping(address => bool) private _canRedeem;
 
     // Antibot features
     uint256 private constant MAX_HOLDING_PERCENTAGE = 5;
-    uint256 private constant TRANSACTION_DELAY = 10 minutes;
+    uint256 private constant TRANSACTION_DELAY = 2.5 minutes;
     mapping(address => uint256) private _lastTransactionTime;
 
     //Events
@@ -73,6 +84,9 @@ contract SpunkySDX is Ownable {
     event Stake(address indexed user, uint256 amount);
     event Unstake(address indexed user, uint256 amount);
     event ClaimRewards(address indexed user, uint256 reward);
+    event VestingScheduleAdded(address indexed account, uint256 amount, uint256 startTime, uint256 cliff, uint256 endTime);
+    event Burn(address indexed account, uint256 amount);
+    event TokensReleased(address indexed account, uint256 amount);
 
    constructor() {
         name = "SpunkySDX";
@@ -82,6 +96,11 @@ contract SpunkySDX is Ownable {
 
         // Initially assign all tokens to the contract itself
         _balances[address(this)] = totalSupply;
+
+        address priceFeedAddress = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
+        priceFeed = AggregatorV3Interface(priceFeedAddress);
+        uint256 ethPriceInUSD = getLatestEthPrice(); // Get ETH price in USD
+        presalePrice = ethPriceInUSD / 2e6; // 1 ETH buys this many tokens (presale)
 
         // Token distribution details based on total supply
         WHITELIST_ALLOCATION = totalSupply * 2 / 100; // 2% of total supply
@@ -112,8 +131,8 @@ contract SpunkySDX is Ownable {
         _allocationBalances[address(this)][5] = TEAM_ALLOCATION;
         _allocationBalances[address(this)][6] = STAKING_ALLOCATION;
 
-        //Transfer Whitelist,presale and IEO allocation to the contract owner
-        _transfer(address(this), owner(), WHITELIST_ALLOCATION + PRESALE_ALLOCATION + IEO_ALLOCATION + TEAM_ALLOCATION);
+        //Transfer Team and IEO allocation to the contract owner
+        _transfer(address(this), owner(), IEO_ALLOCATION + TEAM_ALLOCATION);
         
         emit Transfer(address(0), address(this), totalSupply);
         emit Transfer(address(this), address(this), WHITELIST_ALLOCATION);
@@ -129,24 +148,25 @@ contract SpunkySDX is Ownable {
     }
 
     function allocationBalance(address account, uint8 allocation) public view returns (uint256) {
-        require(allocation >= 1 && allocation <= 3, "Invalid allocation");
+        require(allocation >= 1 && allocation <= 6, "Invalid allocation");
         return _allocationBalances[account][allocation];
     }
 
-    function transfer(address recipient, uint256 amount) public checkTransactionDelay() checkMaxHolding(recipient, amount) returns (bool) {
-     if (isSellTransaction(recipient)) {
-        amount = handleSellTax(amount);
-      }
-      _transfer(msg.sender, recipient, amount);
-      return true;
+    function transfer(address recipient, uint256 amount) public nonReentrant checkTransactionDelay() checkMaxHolding(recipient, amount) returns (bool) {
+        if (isSellTransaction(recipient)) {
+            uint256 taxAmount = (amount * SELL_TAX_PERCENTAGE) / 100;
+            amount -= taxAmount;
+            _transfer(msg.sender, owner(), taxAmount); 
+        }
+        _transfer(msg.sender, recipient, amount);
+        return true;
     }
-
 
     function allowance(address owner, address spender) public view returns (uint256) {
         return _allowances[owner][spender];
     }
 
-    function approve(address spender, uint256 amount) public checkTransactionDelay() checkMaxHolding(spender, amount) returns (bool) {
+    function approve(address spender, uint256 amount) public checkMaxHolding(spender, amount) returns (bool) {
         _approve(msg.sender, spender, amount);
         return true;
     }
@@ -160,12 +180,12 @@ contract SpunkySDX is Ownable {
         return true;
     }
 
-    function increaseAllowance(address spender, uint256 addedValue) public checkTransactionDelay() checkMaxHolding(spender, addedValue) returns (bool) {
+    function increaseAllowance(address spender, uint256 addedValue) public checkMaxHolding(spender, addedValue) returns (bool) {
         _approve(msg.sender, spender, _allowances[msg.sender][spender] + addedValue);
         return true;
     }
 
-    function decreaseAllowance(address spender, uint256 subtractedValue) public checkTransactionDelay() checkMaxHolding(spender, subtractedValue) returns (bool) {
+    function decreaseAllowance(address spender, uint256 subtractedValue) public checkMaxHolding(spender, subtractedValue) returns (bool) {
         uint256 currentAllowance = _allowances[msg.sender][spender];
         require(subtractedValue <= currentAllowance, "ERC20: decreased allowance below zero");
 
@@ -178,14 +198,6 @@ contract SpunkySDX is Ownable {
         require(recipient != address(0), "ERC20: transfer to the zero address");
         require(amount > 0, "ERC20: transfer amount must be greater than zero");
         require(_balances[sender] >= amount, "ERC20: insufficient balance");
-
-        uint256 slippageTolerance = amount * (MAX_SLIPPAGE_TOLERANCE / 100);
-        uint256 minAmount = amount - slippageTolerance;
-        uint256 maxAmount = amount + slippageTolerance;
-        
-        if(msg.sender != owner()) {
-          require(_balances[recipient] >= minAmount && _balances[recipient] <= maxAmount, "Amount exceeds recipient's balance");
-        }
         
         _balances[sender] -= amount;
         _balances[recipient] += amount;
@@ -201,108 +213,116 @@ contract SpunkySDX is Ownable {
         emit Approval(owner, spender, amount);
     }
 
+    function setCanRedeemAirdrop(address[] calldata airdropRecipients, bool canRedeem) external nonReentrant onlyOwner() {
+      for (uint256 i = 0; i < airdropRecipients.length; i++) {
+         _canRedeem[airdropRecipients[i]] = canRedeem;
+       }
+    }
     
-    function redeemAirdrop(uint256 amount) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
-        require(amount > 0, "Invalid staking amount");
-        require(_allocationBalances[address(this)][4] >= amount, "No airdrop balance available");
+    function redeemAirdrop() nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, AIRDROP_ALLOCATION) checkIsAirDropReedemable() {
+        require(!_airdropRedeemed[msg.sender], "Airdrop already redeemed");
+        require(AIRDROP_ALLOCATION > 0, "Invalid amount");
+        require(_allocationBalances[address(this)][4] >= AIRDROP_ALLOCATION, "No airdrop balance available");
 
-        _allocationBalances[address(this)][4] = _allocationBalances[address(this)][4] - amount;
-        _transfer(address(this), msg.sender, amount);
-        
+        _airdropRedeemed[msg.sender] = true; 
+        _allocationBalances[address(this)][4] -= AIRDROP_ALLOCATION;
+        _transfer(address(this), msg.sender, AIRDROP_ALLOCATION);
     }
 
-    function startVesting(address account) external onlyOwner {
-        require(_vestingStart[account] == 0, "Vesting already started");
-        _vestingStart[account] = block.timestamp;
-    }
+    function addVestingSchedule(address account, uint256 amount, uint256 cliffDuration, uint256 vestingDuration) nonReentrant checkTransactionDelay() onlyOwner() public {
+    require(account != address(0), "Invalid account");
+    require(amount > 0, "Invalid amount");
+    require(cliffDuration < vestingDuration, "Cliff duration must be less than vesting duration");
+    require(_balances[owner()] >= amount, "Owner does not have enough balance"); 
 
-    function releaseVestedTokens() external onlyOwner {
-        require(_vestingStart[msg.sender] > 0, "No vesting available");
-        require(block.timestamp >= _vestingStart[msg.sender], "Vesting has not started yet");
+    _vestingDetails[account] = VestingDetail({
+        amount: amount,
+        startTime: block.timestamp,
+        cliffDuration: cliffDuration,
+        vestingDuration: vestingDuration,
+        releasedAmount: 0
+    });
 
-        uint256 vestingPeriod = VESTING_PERIOD * 30 days;
-        uint256 releaseInterval = RELEASE_INTERVAL * 30 days;
+    _transfer(owner(), account, amount);
 
-        uint256 totalVested = balanceOf(address(this)) - WHITELIST_ALLOCATION - PRESALE_ALLOCATION - IEO_ALLOCATION;
-        uint256 tokensPerInterval = totalVested / (vestingPeriod * releaseInterval);
+    emit VestingScheduleAdded(account, amount, block.timestamp, cliffDuration, vestingDuration);
+   }
 
-        uint256 intervalsPassed = (block.timestamp - _vestingStart[msg.sender]) / releaseInterval;
-        uint256 tokensToRelease = tokensPerInterval * intervalsPassed;
+   function releaseVestedTokens(address account) nonReentrant external onlyOwner() {
+    require(account != address(0), "Invalid account");
+    VestingDetail storage vesting = _vestingDetails[account];
+    require(vesting.amount > 0, "No vesting available");
+    
+    uint256 elapsedTime = block.timestamp - vesting.startTime;
+    require(elapsedTime >= vesting.cliffDuration, "Cliff period has not ended");
 
-        uint256 tokensReleased = _vestingReleased[msg.sender];
-        uint256 newTokensReleased = tokensToRelease - tokensReleased;
+    uint256 releaseableAmount = (elapsedTime * vesting.amount) / vesting.vestingDuration;
+    uint256 unreleasedAmount = releaseableAmount - vesting.releasedAmount;
 
-        _vestingReleased[msg.sender] = tokensToRelease;
-        _transfer(address(this), msg.sender, newTokensReleased);
-    }
+    require(unreleasedAmount > 0, "No tokens to release");
 
-    function getVestingInfo(address account) external view returns (uint256, uint256, uint256) {
-        require(_vestingStart[account] > 0, "No vesting available");
+    vesting.releasedAmount += unreleasedAmount;
+    _transfer(address(this), account, unreleasedAmount);
 
-        uint256 vestingPeriod = VESTING_PERIOD * 30 days;
-        uint256 releaseInterval = RELEASE_INTERVAL * 30 days;
+    emit TokensReleased(account, unreleasedAmount);
+   }
 
-        uint256 totalVested = balanceOf(address(this)) - WHITELIST_ALLOCATION - PRESALE_ALLOCATION - IEO_ALLOCATION;
-        uint256 tokensPerInterval = totalVested / (vestingPeriod / releaseInterval);
-
-        uint256 intervalsPassed = (block.timestamp - _vestingStart[account]) / (releaseInterval);
-        uint256 tokensToRelease = tokensPerInterval * intervalsPassed;
-
-        uint256 tokensReleased = _vestingReleased[account];
-        uint256 newTokensReleased = tokensToRelease - tokensReleased;
-
-        return (tokensToRelease, tokensReleased, newTokensReleased);
-    }
 
     function calculateStakingReward(uint256 amount, StakingPlan plan) internal view returns (uint256) {
         require(amount > 0, "Invalid staking amount");
 
         uint256 rewardPercentage = _stakingPlanReturns[plan];
-        return (amount * rewardPercentage) / 10000;
+        return (amount * rewardPercentage) / 1000;
     }
 
-    function updateStakingRewards(address staker, uint256 amount, StakingPlan plan) internal {
-        require(staker != address(0), "Invalid staker address");
+   function stake(uint256 amount, StakingPlan plan) nonReentrant external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
         require(amount > 0, "Invalid staking amount");
+        require(_stakingBalances[msg.sender] == 0, "This address already has an active stake");
 
-        uint256 rewardPercentage = _stakingPlanReturns[plan];
-        uint256 rewards = (amount * rewardPercentage) / 100; // assuming that the reward percentage is a whole number
-
-        _stakingRewards[staker] = _stakingRewards[staker] + rewards;
-    }
-
-    function stake(uint256 amount, StakingPlan plan) external checkTransactionDelay() checkMaxHolding(msg.sender, amount) {
-        require(amount > 0, "Invalid staking amount");
-
-        uint256 potentialReward = calculateStakingReward(amount, plan);
-        require(totalRewardsGiven + potentialReward <= STAKING_ALLOCATION, "Staking rewards exhausted");
+        uint256 reward = calculateStakingReward(amount, plan);
+        require(_allocationBalances[address(this)][6] >= reward, "Staking rewards exhausted");
 
         _transfer(msg.sender, address(this), amount);
-        _stakingBalances[msg.sender] = _stakingBalances[msg.sender] + amount;
+        _stakingBalances[msg.sender] = amount;
 
-        updateStakingRewards(msg.sender, amount, plan);
+        _stakingStartTimes[msg.sender] = block.timestamp;
+        _stakingPlans[msg.sender] = plan;
+        _stakingRewards[msg.sender] = reward;
+
+        _allocationBalances[address(this)][6] -= reward; // Decrement the staking allocation balance
+
         emit Stake(msg.sender, amount);
-    }
+   }
 
+   function unstake(uint256 amount) nonReentrant external checkTransactionDelay() {
+    require(amount > 0, "Invalid unstaking amount");
+    require(_stakingBalances[msg.sender] >= amount, "No staking balance available");
 
-    function unstake(uint256 amount) external checkTransactionDelay() {
-        require(amount > 0, "Invalid unstaking amount");
-        require(_stakingBalances[msg.sender] >= amount, "No staking balance available");
-
-        _stakingBalances[msg.sender] = _stakingBalances[msg.sender] - amount;
-        _transfer(address(this), msg.sender, amount);
-        emit Unstake(msg.sender, amount);
-    }
-
-    function claimStakingRewards() external checkTransactionDelay() checkStakingRewards(_stakingRewards[msg.sender]) {
-        require(_stakingRewards[msg.sender] > 0, "No staking rewards available");
-
-        uint256 rewards = _stakingRewards[msg.sender];
+    // If unstaking before the plan duration, all rewards are lost
+    if (block.timestamp < _stakingStartTimes[msg.sender] + _stakingPlanDurations[_stakingPlans[msg.sender]] * 1 days) {
         _stakingRewards[msg.sender] = 0;
-        totalRewardsGiven += rewards; // Increase the total amount of rewards given
-        _transfer(address(this), msg.sender, rewards);
-        emit ClaimRewards(msg.sender, rewards);
     }
+
+    _stakingBalances[msg.sender] -= amount;
+    _transfer(address(this), msg.sender, amount);
+    emit Unstake(msg.sender, amount);
+   }
+
+
+   function claimStakingRewards() nonReentrant public checkTransactionDelay() {
+    require(block.timestamp >= _stakingStartTimes[msg.sender] + _stakingPlanDurations[_stakingPlans[msg.sender]] * 1 days, "Staking period has not ended");
+    require(_stakingBalances[msg.sender] > 0, "No staking balance available");
+
+    uint256 rewards = _stakingRewards[msg.sender];
+    uint256 totalAmount = _stakingBalances[msg.sender] + rewards;
+
+    _stakingRewards[msg.sender] = 0;
+    _stakingBalances[msg.sender] = 0;
+
+    _transfer(address(this), msg.sender, totalAmount);
+    emit ClaimRewards(msg.sender, totalAmount);
+   }
+
 
     function isSellTransaction(address recipient) internal view returns (bool) {
         return recipient == address(this);
@@ -315,7 +335,7 @@ contract SpunkySDX is Ownable {
         return amount - taxAmount;
     }
 
-    function burn(uint256 amount) public onlyOwner {
+   function burn(uint256 amount) public  onlyOwner() {
         require(totalBurned + amount <= MAX_BURN, "Total burned exceeds max burn amount");
         require(amount <= _balances[msg.sender], "Not enough tokens to burn");
 
@@ -324,6 +344,7 @@ contract SpunkySDX is Ownable {
         totalBurned += amount;
 
         emit Transfer(msg.sender, address(0), amount);
+        emit Burn(msg.sender, amount);
     }
 
     function getStakingRewards(address staker) external view returns (uint256) {
@@ -333,6 +354,51 @@ contract SpunkySDX is Ownable {
     function getStakingBalance(address staker) external view returns (uint256) {
         return _stakingBalances[staker];
     }
+
+    function buyTokens() nonReentrant public checkMaxHolding(msg.sender, msg.value) checkTransactionDelay() payable {
+        require(isPresale, "Presale has ended");
+        require(msg.sender != owner(), "Owner cannot participate in presale");
+        uint256 tokensToBuy = msg.value * presalePrice;
+
+        // Check if the presale allocation is sufficient
+        require(_allocationBalances[address(this)][2] >= tokensToBuy, "Not enough presale tokens available");
+
+        // Calculate the immediate release and vested amounts
+        uint256 immediateRelease = tokensToBuy / 4; // 25%
+        uint256 vestedAmount = (tokensToBuy * 3) / 4; // 75%
+
+        // Update the presale allocation
+        _allocationBalances[address(this)][2] -= tokensToBuy;
+
+        // Transfer the immediate release portion
+        _transfer(address(this), msg.sender, immediateRelease);
+
+        // Set up the vesting schedule for the vested amount, over 5 months
+        uint256 cliffDuration = 0; // No cliff for presale
+        uint256 vestingDuration = 30 days * 5; // 5 months
+        addVestingSchedule(msg.sender, vestedAmount, cliffDuration, vestingDuration);
+    }
+
+     receive() external payable {
+      if (isPresale) {
+        // If presale is on, call the buyTokens function
+        buyTokens();
+        } else {
+        // If presale is off, refund the Ether to the sender
+        payable(msg.sender).transfer(msg.value);
+       }
+     }
+
+    function getLatestEthPrice() public view returns (uint256) {
+      (, int price,,,) = priceFeed.latestRoundData();
+      require(price >= 0, "Price is negative");
+      return uint256(price); // Convert the price to uint256
+    }
+
+
+    function endPresale() external onlyOwner {
+        isPresale = false;
+    }  
 
     function renounceOwnership() public override onlyOwner {
         // Prevent renouncing ownership if there are staking rewards available
@@ -345,10 +411,42 @@ contract SpunkySDX is Ownable {
         super.transferOwnership(newOwner);
     }
 
+    function getStakingAllocation() external view returns (uint256) {
+     return _allocationBalances[address(this)][6];
+    }
+
+    function getPresaleState() external view returns (bool) {
+     return isPresale;
+    }
+
+    function getPresalePrice() external view returns (uint256) {
+     return presalePrice;
+    }
+
+    function getPresaleAllocation() external view returns (uint256) {
+     return _allocationBalances[address(this)][2];
+    }
+
+    function getAirdropAllocation() external view returns (uint256) {
+     return _allocationBalances[address(this)][4];
+    }
+
+    function getTotalBurned() external view returns (uint256) {
+     return totalBurned;
+    }
+ 
+    function getTotalRewardsGiven() external view returns (uint256) {
+     return totalRewardsGiven;
+    }
+
+    function getMaxBurn() external view returns (uint256) {
+     return MAX_BURN;
+    }
+
     modifier checkTransactionDelay() {
         require(
             _lastTransactionTime[msg.sender] + TRANSACTION_DELAY <= block.timestamp,
-            "Transaction cooldown period has not passed"
+            "Transacation cooldown period has not passed"
         );
         _lastTransactionTime[msg.sender] = block.timestamp;
         _;
@@ -366,6 +464,11 @@ contract SpunkySDX is Ownable {
 
     modifier checkStakingRewards(uint256 reward) {
     require(totalRewardsGiven + reward <= STAKING_ALLOCATION, "Total staking rewards exceeded");
+    _;
+   }
+
+   modifier checkIsAirDropReedemable() {
+    require(_canRedeem[msg.sender] == true, "You are whitelisted for airdop");
     _;
    }
 }
