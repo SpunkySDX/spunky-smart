@@ -47,7 +47,7 @@ contract SpunkySDX is Ownable, ReentrancyGuard {
     }
 
     // Fixed price for buying tokens during the presale (in wei per token)
-    uint256 public presalePrice = 1;
+    uint256 public presalePrice = 0.000001;
    
     // State to determine if the contract is in presale or launch state
     bool public isPresale = true;
